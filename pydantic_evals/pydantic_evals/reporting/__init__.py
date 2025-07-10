@@ -786,8 +786,8 @@ class ReportCaseRenderer:
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
-    @staticmethod
     def _render_dict(
+        self,
         case_dict: Mapping[str, EvaluationResult[T] | T],
         renderers: Mapping[str, _AbstractRenderer[T]],
         *,
@@ -797,7 +797,7 @@ class ReportCaseRenderer:
         for key, val in case_dict.items():
             value = cast(EvaluationResult[T], val).value if isinstance(val, EvaluationResult) else val
             rendered = renderers[key].render_value(key if include_names else None, value)
-            if isinstance(val, EvaluationResult) and (reason := val.reason):
+            if self.include_reasons and isinstance(val, EvaluationResult) and (reason := val.reason):
                 rendered += f'\n  Reason: {reason}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR

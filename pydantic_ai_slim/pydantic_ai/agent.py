@@ -9,7 +9,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from contextvars import ContextVar
 from copy import deepcopy
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload, AsyncIterable
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -31,6 +31,7 @@ from . import (
     usage as _usage,
 )
 from ._agent_graph import HistoryProcessor
+from .messages import AgentStreamEvent, HandleResponseEvent
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
 from .result import FinalResult, StreamedRunResult
@@ -155,6 +156,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     )
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
+    _stream_handler: Callable[[RunContext[AgentDepsT], AsyncIterable[AgentStreamEvent | HandleResponseEvent]], Awaitable[None]] | None = dataclasses.field(repr=False)
     _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
@@ -177,6 +179,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        stream_handler: Callable[[RunContext[AgentDepsT]], Awaitable[None]] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -207,6 +210,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        stream_handler: Callable[[RunContext[AgentDepsT]], Awaitable[None]] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -232,6 +236,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        stream_handler: Callable[[RunContext[AgentDepsT]], Awaitable[None]] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -264,6 +269,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             prepare_tools: custom method to prepare the tool definition of all tools for each step.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
+            stream_handler: An optional handler to make use of when handling streaming requests.
+                If provided, the agent will make use of the streaming versions of the APIs even when using non-streaming
+                run/iter calls, and pass the stream of events to this handler.
             mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
                 for each server you want the agent to connect to.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
@@ -288,6 +296,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self.model = model
         else:
             self.model = models.infer_model(model)
+        # TODO: Need to set the stream_handler on the model; this probably involves somehow modifying the value..
 
         self.end_strategy = end_strategy
         self.name = name
@@ -363,6 +372,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
         self._prepare_tools = prepare_tools
+        self._stream_handler = stream_handler
         self.history_processors = history_processors or []
         for tool in tools:
             if isinstance(tool, Tool):
@@ -734,6 +744,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             prepare_tools=self._prepare_tools,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
+            stream_handler=self._stream_handler,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,

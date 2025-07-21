@@ -1717,6 +1717,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         return CombinedToolset(all_toolsets)
 
+    @property
+    def toolset(self) -> AbstractToolset[AgentDepsT]:
+        """The complete toolset that will be available to the model during an agent run.
+
+        This will include function tools registered directly to the agent, output tools, and user-provided toolsets including MCP servers.
+        """
+        return self._get_toolset()
+
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
 

@@ -126,7 +126,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     @property
     def tool_name_conflict_hint(self) -> str:
-        return 'Consider setting `tool_prefix` to avoid name conflicts.'
+        return 'Set the `tool_prefix` attribute to avoid name conflicts.'
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.

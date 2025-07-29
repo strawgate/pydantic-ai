@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import TypeVar
+from pathlib import Path
+from typing import Literal, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,11 +12,14 @@ from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
+from pydantic_ai.toolsets.dynamic import DynamicToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -626,3 +630,70 @@ async def test_tool_manager_multiple_failed_tools():
 
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
+
+async def test_dynamic_toolset():
+    run_context = build_run_context(Path())
+
+    def test_function(ctx: RunContext[Path]) -> Literal['nothing']:
+        return 'nothing'
+
+    function_toolset = FunctionToolset[Path]()
+    function_toolset.add_function(test_function)
+
+    async def prepare_toolset(ctx: RunContext[Path]) -> AbstractToolset[Path]:
+        return function_toolset
+
+    dynamic_toolset: DynamicToolset[Path] = DynamicToolset[Path](build_toolset_fn=prepare_toolset)
+
+    # The toolset is unique per context manager
+    async with dynamic_toolset:
+
+        # The toolset starts empty
+        assert dynamic_toolset._dynamic_toolset.get().toolsets == []
+
+        # The toolset is built dynamically on the first call to get_tools within the context
+        _ = await dynamic_toolset.get_tools(run_context)
+        assert dynamic_toolset._dynamic_toolset.get().toolsets == [function_toolset]
+
+        # Any time the context is entered again, the toolsets are reset, to be generated again
+        async with dynamic_toolset:
+            assert dynamic_toolset._dynamic_toolset.get().toolsets == []
+
+        assert dynamic_toolset._dynamic_toolset.get().toolsets == [function_toolset]
+
+    async with dynamic_toolset:
+        assert dynamic_toolset._dynamic_toolset.get().toolsets == []
+
+async def test_dynamic_toolset_with_agent():
+
+
+    def test_function(ctx: RunContext[Path]) -> Literal['nothing']:
+        return 'nothing'
+
+    
+    def test_function_two(ctx: RunContext[Path]) -> Literal['nothing']:
+        return 'nothing'
+
+
+    function_toolset = FunctionToolset[Path]()
+    function_toolset.add_function(test_function)
+    function_toolset.add_function(test_function_two)
+
+    async def prepare_toolset(ctx: RunContext[Path]) -> AbstractToolset[Path]:
+        return function_toolset
+
+    dynamic_toolset: DynamicToolset[Path] = DynamicToolset[Path](build_toolset_fn=prepare_toolset)
+
+    agent = Agent[Path, str](
+        model=TestModel(),
+        toolsets=[dynamic_toolset],
+        deps_type=Path,
+        output_type=str,
+    )
+
+    async with agent:
+        result = await agent.run(deps=Path('.'), user_prompt='Please call each tool you have access to and tell me what it returns')
+        print(result.output)
+
+        result = await agent.run(deps=Path('./tomato'), user_prompt='Please call each tool you have access to and tell me what it returns.')
+        print(result.output)

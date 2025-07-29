@@ -631,6 +631,7 @@ async def test_tool_manager_multiple_failed_tools():
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
+
 async def test_dynamic_toolset():
     run_context = build_run_context(Path())
 
@@ -647,7 +648,6 @@ async def test_dynamic_toolset():
 
     # The toolset is unique per context manager
     async with dynamic_toolset:
-
         # The toolset starts empty
         assert dynamic_toolset._dynamic_toolset.get().toolsets == []
 
@@ -664,16 +664,13 @@ async def test_dynamic_toolset():
     async with dynamic_toolset:
         assert dynamic_toolset._dynamic_toolset.get().toolsets == []
 
+
 async def test_dynamic_toolset_with_agent():
-
-
     def test_function(ctx: RunContext[Path]) -> Literal['nothing']:
         return 'nothing'
 
-    
     def test_function_two(ctx: RunContext[Path]) -> Literal['nothing']:
         return 'nothing'
-
 
     function_toolset = FunctionToolset[Path]()
     function_toolset.add_function(test_function)
@@ -692,8 +689,12 @@ async def test_dynamic_toolset_with_agent():
     )
 
     async with agent:
-        result = await agent.run(deps=Path('.'), user_prompt='Please call each tool you have access to and tell me what it returns')
+        result = await agent.run(
+            deps=Path('.'), user_prompt='Please call each tool you have access to and tell me what it returns'
+        )
         print(result.output)
 
-        result = await agent.run(deps=Path('./tomato'), user_prompt='Please call each tool you have access to and tell me what it returns.')
+        result = await agent.run(
+            deps=Path('./tomato'), user_prompt='Please call each tool you have access to and tell me what it returns.'
+        )
         print(result.output)

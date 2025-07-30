@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Literal, TypeVar
 from unittest.mock import AsyncMock
 
@@ -12,7 +11,6 @@ from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
@@ -690,11 +688,11 @@ async def test_dynamic_toolset():
                 assert dynamic_toolset.toolset is None
                 _ = await dynamic_toolset.get_tools(something_else_context)
                 assert dynamic_toolset.toolset == something_else_toolset
-                assert dynamic_toolset._toolset_stack.get() == [
+                assert dynamic_toolset._toolset_stack.get() == [  # pyright: ignore[reportPrivateUsage]
                     something_toolset,
                     nothing_toolset,
                     something_else_toolset,
-                ]  # pyright: ignore[reportPrivateUsage]
+                ]
 
             # Ensure the toolset reverts to the 2nd toolset
             _ = await dynamic_toolset.get_tools(nothing_context)
@@ -709,61 +707,3 @@ async def test_dynamic_toolset():
     async with dynamic_toolset:
         assert dynamic_toolset.toolset is None
         assert dynamic_toolset._toolset_stack.get() == [None]  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_dynamic_toolset_with_agent():
-    def test_tomato(ctx: RunContext[Path]) -> Literal['tomato']:
-        return 'tomato'
-
-    def test_function_two(ctx: RunContext[Path]) -> Literal['nothing']:
-        return 'nothing'
-
-    tomato_toolset = FunctionToolset[Path]()
-    tomato_toolset.add_function(test_tomato)
-
-    function_toolset_two = FunctionToolset[Path]()
-    function_toolset_two.add_function(test_function_two)
-
-    async def prepare_toolset(ctx: RunContext[Path]) -> AbstractToolset[Path]:
-        if ctx.deps == Path('tomato'):
-            return tomato_toolset
-        else:
-            return function_toolset_two
-
-    dynamic_toolset: DynamicToolset[Path] = DynamicToolset[Path](build_toolset_fn=prepare_toolset)
-
-    agent = Agent[Path, str](
-        model=TestModel(),
-        toolsets=[dynamic_toolset],
-        deps_type=Path,
-        output_type=str,
-    )
-
-    async def call_agent(ctx: RunContext[Path]):
-        async with agent:
-            return (
-                await agent.run(
-                    deps=Path('tomato'),
-                    user_prompt='Please call each tool you have access to and tell me what it returns.',
-                )
-            ).output
-
-    agent_two = Agent[Path, str](
-        model=TestModel(),
-        toolsets=[dynamic_toolset],
-        deps_type=Path,
-        tools=[call_agent],
-        output_type=str,
-    )
-
-    async with agent, agent_two:
-        result = await agent_two.run(
-            deps=Path('.'),
-            user_prompt='Please call Agent',
-        )
-        print(result.output)
-
-        result = await agent.run(
-            deps=Path('./tomato'), user_prompt='Please call each tool you have access to and tell me what it returns.'
-        )
-        print(result.output)

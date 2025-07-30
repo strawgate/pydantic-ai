@@ -678,7 +678,6 @@ async def test_dynamic_toolset():
 
         # Enter the second context manager
         async with dynamic_toolset:
-
             # The toolset appears empty, and is built on the call to get_tools
             assert dynamic_toolset.toolset is None
             _ = await dynamic_toolset.get_tools(nothing_context)
@@ -691,7 +690,11 @@ async def test_dynamic_toolset():
                 assert dynamic_toolset.toolset is None
                 _ = await dynamic_toolset.get_tools(something_else_context)
                 assert dynamic_toolset.toolset == something_else_toolset
-                assert dynamic_toolset._toolset_stack.get() == [something_toolset, nothing_toolset, something_else_toolset]  # pyright: ignore[reportPrivateUsage]
+                assert dynamic_toolset._toolset_stack.get() == [
+                    something_toolset,
+                    nothing_toolset,
+                    something_else_toolset,
+                ]  # pyright: ignore[reportPrivateUsage]
 
             # Ensure the toolset reverts to the 2nd toolset
             _ = await dynamic_toolset.get_tools(nothing_context)
@@ -722,7 +725,7 @@ async def test_dynamic_toolset_with_agent():
     function_toolset_two.add_function(test_function_two)
 
     async def prepare_toolset(ctx: RunContext[Path]) -> AbstractToolset[Path]:
-        if ctx.deps == Path("tomato"):
+        if ctx.deps == Path('tomato'):
             return tomato_toolset
         else:
             return function_toolset_two
@@ -735,10 +738,15 @@ async def test_dynamic_toolset_with_agent():
         deps_type=Path,
         output_type=str,
     )
+
     async def call_agent(ctx: RunContext[Path]):
         async with agent:
-            return (await agent.run(deps=Path("tomato"), user_prompt='Please call each tool you have access to and tell me what it returns.')).output
-
+            return (
+                await agent.run(
+                    deps=Path('tomato'),
+                    user_prompt='Please call each tool you have access to and tell me what it returns.',
+                )
+            ).output
 
     agent_two = Agent[Path, str](
         model=TestModel(),
@@ -748,7 +756,7 @@ async def test_dynamic_toolset_with_agent():
         output_type=str,
     )
 
-    async with (agent, agent_two):
+    async with agent, agent_two:
         result = await agent_two.run(
             deps=Path('.'),
             user_prompt='Please call Agent',

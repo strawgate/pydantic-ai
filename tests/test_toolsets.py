@@ -637,23 +637,11 @@ async def test_dynamic_toolset():
     something_else_context: RunContext[str] = build_run_context(deps='something_else')
     nothing_context: RunContext[str] = build_run_context(deps='nothing')
 
-    def test_something(ctx: RunContext[str]) -> Literal['something']:
-        return 'something'
-
     something_toolset = FunctionToolset[str]()
-    something_toolset.add_function(test_something)
-
-    def test_something_else(ctx: RunContext[str]) -> Literal['something_else']:
-        return 'something_else'
 
     something_else_toolset = FunctionToolset[str]()
-    something_else_toolset.add_function(test_something_else)
-
-    def test_nothing(ctx: RunContext[str]) -> Literal['nothing']:
-        return 'nothing'
 
     nothing_toolset = FunctionToolset[str]()
-    nothing_toolset.add_function(test_nothing)
 
     async def prepare_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
         if ctx.deps == 'something':
@@ -707,3 +695,30 @@ async def test_dynamic_toolset():
     async with dynamic_toolset:
         assert dynamic_toolset.toolset is None
         assert dynamic_toolset._toolset_stack.get() == [None]  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_dynamic_toolset_call():
+    """Test that the dynamic toolset correctly handles nested context managers."""
+
+    something_context: RunContext[str] = build_run_context(deps='something')
+
+    def test_something(ctx: RunContext[str]) -> Literal['something']:
+        return 'something'
+
+    async def prepare_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
+        toolset = FunctionToolset[str]()
+        toolset.add_function(test_something)
+        return toolset
+
+    dynamic_toolset: DynamicToolset[str] = DynamicToolset[str](build_toolset_fn=prepare_toolset)
+
+    # Enter the first context manager
+    async with dynamic_toolset:
+        # The toolset is built dynamically on the first call to get_tools within the context
+        tools = await dynamic_toolset.get_tools(something_context)
+
+        first_tool = tools['test_something']
+        first_tool_result = await dynamic_toolset.call_tool(
+            name='test_something', tool_args={}, ctx=something_context, tool=first_tool
+        )
+        assert first_tool_result == 'something'

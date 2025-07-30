@@ -633,51 +633,99 @@ async def test_tool_manager_multiple_failed_tools():
 
 
 async def test_dynamic_toolset():
-    run_context = build_run_context(Path())
+    """Test that the dynamic toolset correctly handles nested context managers."""
 
-    def test_function(ctx: RunContext[Path]) -> Literal['nothing']:
+    something_context: RunContext[str] = build_run_context(deps='something')
+    something_else_context: RunContext[str] = build_run_context(deps='something_else')
+    nothing_context: RunContext[str] = build_run_context(deps='nothing')
+
+    def test_something(ctx: RunContext[str]) -> Literal['something']:
+        return 'something'
+
+    something_toolset = FunctionToolset[str]()
+    something_toolset.add_function(test_something)
+
+    def test_something_else(ctx: RunContext[str]) -> Literal['something_else']:
+        return 'something_else'
+
+    something_else_toolset = FunctionToolset[str]()
+    something_else_toolset.add_function(test_something_else)
+
+    def test_nothing(ctx: RunContext[str]) -> Literal['nothing']:
         return 'nothing'
 
-    function_toolset = FunctionToolset[Path]()
-    function_toolset.add_function(test_function)
+    nothing_toolset = FunctionToolset[str]()
+    nothing_toolset.add_function(test_nothing)
 
-    async def prepare_toolset(ctx: RunContext[Path]) -> AbstractToolset[Path]:
-        return function_toolset
+    async def prepare_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
+        if ctx.deps == 'something':
+            return something_toolset
+        elif ctx.deps == 'something_else':
+            return something_else_toolset
+        else:
+            return nothing_toolset
 
-    dynamic_toolset: DynamicToolset[Path] = DynamicToolset[Path](build_toolset_fn=prepare_toolset)
+    dynamic_toolset: DynamicToolset[str] = DynamicToolset[str](build_toolset_fn=prepare_toolset)
 
-    # The toolset is unique per context manager
+    # Enter the first context manager
     async with dynamic_toolset:
-        # The toolset starts empty
-        assert dynamic_toolset._dynamic_toolset.get().toolsets == []
+        assert dynamic_toolset.toolset is None
 
         # The toolset is built dynamically on the first call to get_tools within the context
-        _ = await dynamic_toolset.get_tools(run_context)
-        assert dynamic_toolset._dynamic_toolset.get().toolsets == [function_toolset]
+        _ = await dynamic_toolset.get_tools(something_context)
+        assert dynamic_toolset.toolset == something_toolset
+        assert dynamic_toolset._toolset_stack.get() == [something_toolset]  # pyright: ignore[reportPrivateUsage]
 
-        # Any time the context is entered again, the toolsets are reset, to be generated again
+        # Enter the second context manager
         async with dynamic_toolset:
-            assert dynamic_toolset._dynamic_toolset.get().toolsets == []
 
-        assert dynamic_toolset._dynamic_toolset.get().toolsets == [function_toolset]
+            # The toolset appears empty, and is built on the call to get_tools
+            assert dynamic_toolset.toolset is None
+            _ = await dynamic_toolset.get_tools(nothing_context)
+            assert dynamic_toolset.toolset == nothing_toolset
+            assert dynamic_toolset._toolset_stack.get() == [something_toolset, nothing_toolset]  # pyright: ignore[reportPrivateUsage]
 
+            # Enter the third context manager
+            async with dynamic_toolset:
+                # The toolset appears empty, and is built on the call to get_tools
+                assert dynamic_toolset.toolset is None
+                _ = await dynamic_toolset.get_tools(something_else_context)
+                assert dynamic_toolset.toolset == something_else_toolset
+                assert dynamic_toolset._toolset_stack.get() == [something_toolset, nothing_toolset, something_else_toolset]  # pyright: ignore[reportPrivateUsage]
+
+            # Ensure the toolset reverts to the 2nd toolset
+            _ = await dynamic_toolset.get_tools(nothing_context)
+            assert dynamic_toolset.toolset == nothing_toolset
+            assert dynamic_toolset._toolset_stack.get() == [something_toolset, nothing_toolset]  # pyright: ignore[reportPrivateUsage]
+
+        # Ensure the toolset reverts to the 1st toolset
+        assert dynamic_toolset.toolset == something_toolset
+        assert dynamic_toolset._toolset_stack.get() == [something_toolset]  # pyright: ignore[reportPrivateUsage]
+
+    # Ensure the toolset is empty after exiting all context managers
     async with dynamic_toolset:
-        assert dynamic_toolset._dynamic_toolset.get().toolsets == []
+        assert dynamic_toolset.toolset is None
+        assert dynamic_toolset._toolset_stack.get() == [None]  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dynamic_toolset_with_agent():
-    def test_function(ctx: RunContext[Path]) -> Literal['nothing']:
-        return 'nothing'
+    def test_tomato(ctx: RunContext[Path]) -> Literal['tomato']:
+        return 'tomato'
 
     def test_function_two(ctx: RunContext[Path]) -> Literal['nothing']:
         return 'nothing'
 
-    function_toolset = FunctionToolset[Path]()
-    function_toolset.add_function(test_function)
-    function_toolset.add_function(test_function_two)
+    tomato_toolset = FunctionToolset[Path]()
+    tomato_toolset.add_function(test_tomato)
+
+    function_toolset_two = FunctionToolset[Path]()
+    function_toolset_two.add_function(test_function_two)
 
     async def prepare_toolset(ctx: RunContext[Path]) -> AbstractToolset[Path]:
-        return function_toolset
+        if ctx.deps == Path("tomato"):
+            return tomato_toolset
+        else:
+            return function_toolset_two
 
     dynamic_toolset: DynamicToolset[Path] = DynamicToolset[Path](build_toolset_fn=prepare_toolset)
 
@@ -687,10 +735,23 @@ async def test_dynamic_toolset_with_agent():
         deps_type=Path,
         output_type=str,
     )
+    async def call_agent(ctx: RunContext[Path]):
+        async with agent:
+            return (await agent.run(deps=Path("tomato"), user_prompt='Please call each tool you have access to and tell me what it returns.')).output
 
-    async with agent:
-        result = await agent.run(
-            deps=Path('.'), user_prompt='Please call each tool you have access to and tell me what it returns'
+
+    agent_two = Agent[Path, str](
+        model=TestModel(),
+        toolsets=[dynamic_toolset],
+        deps_type=Path,
+        tools=[call_agent],
+        output_type=str,
+    )
+
+    async with (agent, agent_two):
+        result = await agent_two.run(
+            deps=Path('.'),
+            user_prompt='Please call Agent',
         )
         print(result.output)
 

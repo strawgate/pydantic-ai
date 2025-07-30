@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import Awaitable, Callable
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Self
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
-from pydantic_ai.toolsets.combined import CombinedToolset
 
 if TYPE_CHECKING:
     pass
@@ -18,47 +17,42 @@ BuildToolsetFunc = Callable[[RunContext[AgentDepsT]], Awaitable[AbstractToolset[
 
 
 class DynamicToolset(AbstractToolset[AgentDepsT], ABC):
-    """A Toolset that is dynamically built during an Agent run based on the first available run context."""
+    """A Toolset that is dynamically built during the Agent run."""
 
     _build_toolset_fn: BuildToolsetFunc[AgentDepsT]
 
-    _dynamic_toolset: ContextVar[CombinedToolset[AgentDepsT]] = ContextVar(
-        '_toolset', default=CombinedToolset[AgentDepsT](toolsets=[])
-    )
-    _token: Token[CombinedToolset[AgentDepsT]] | None = None
-    # _toolset_deps: ContextVar[AgentDepsT | None] = ContextVar('_toolset_deps', default=None)
+    _toolset_stack: ContextVar[list[AbstractToolset[AgentDepsT] | None]] = ContextVar('_toolset_stack', default=[])
 
     def __init__(self, build_toolset_fn: BuildToolsetFunc[AgentDepsT]):
         self._build_toolset_fn = build_toolset_fn
 
     async def __aenter__(self) -> Self:
-        # Store the current toolset in a token, so that it can be reset when the context is exited
-        self._token = self._dynamic_toolset.set(CombinedToolset[AgentDepsT](toolsets=[]))
+        # Add a placeholder to the toolset stack, to be replaced during the first call to get_tools
+        self._toolset_stack.set([*self._toolset_stack.get(), None])
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        # Reset the toolset to the previous toolset, so that it can be used again
-        if self._token:
-            self._dynamic_toolset.reset(self._token)
-        self._token = None
+        # Pop the top toolset from the stack, to revert to the previous toolset
+        self._toolset_stack.set(self._toolset_stack.get()[:-1])
         return None
 
     @property
-    def _toolset(self) -> CombinedToolset[AgentDepsT]:
-        if not (toolset := self._dynamic_toolset.get()):
-            msg = 'Toolset not initialized. Use the `async with` context manager to initialize the toolset.'
-            raise RuntimeError(msg)
+    def toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        """Get the current toolset from the stack."""
+        return self._toolset_stack.get()[-1]
 
-        return toolset
+    @toolset.setter
+    def toolset(self, toolset: AbstractToolset[AgentDepsT] | None):
+        """Set the current toolset on the stack."""
+        self._toolset_stack.set([*self._toolset_stack.get()[:-1], toolset])
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if len(self._toolset.toolsets) == 0 or ctx.run_step == 0:
-            toolset = await self._build_toolset_fn(ctx)
-            self._toolset.toolsets = [toolset]
+        if not self.toolset:
+            self.toolset = await self._build_toolset_fn(ctx)
 
-        return await self._toolset.get_tools(ctx=ctx)
+        return await self.toolset.get_tools(ctx=ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        return await self._toolset.call_tool(name=name, tool_args=tool_args, ctx=ctx, tool=tool)
+        return await tool.toolset.call_tool(name=name, tool_args=tool_args, ctx=ctx, tool=tool)

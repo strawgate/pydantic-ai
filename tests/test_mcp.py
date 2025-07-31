@@ -96,6 +96,9 @@ async def test_context_manager_initialization_error() -> None:
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     from mcp.client.session import ClientSession
 
+    with pytest.raises(Exception):
+        _ = server.client
+
     with patch.object(ClientSession, 'initialize', side_effect=Exception):
         with pytest.raises(Exception):
             async with server.setup():

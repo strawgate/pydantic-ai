@@ -5,10 +5,11 @@ from collections import defaultdict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Self, TypeVar
+from typing import Any, TypeVar
 
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import Self
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
@@ -491,15 +492,13 @@ async def test_context_manager_failed_initialization():
         async def setup(self) -> AsyncGenerator[Self, Any]:
             raise InitializationError
 
-            yield self
+            yield self  # pragma: no cover
 
-        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
-            return {}
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]: ...  # pragma: no cover
 
         async def call_tool(
             self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
-        ) -> Any:
-            return None
+        ) -> Any: ...  # pragma: no cover
 
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server2 = FailingToolset()

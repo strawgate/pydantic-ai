@@ -149,5 +149,3 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .renamed import RenamedToolset
 
         return RenamedToolset(self, name_map)
-
-

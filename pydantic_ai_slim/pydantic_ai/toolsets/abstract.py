@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypeAlias
@@ -16,7 +17,9 @@ if TYPE_CHECKING:
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
 
-ToolsetFunc: TypeAlias = 'Callable[[RunContext[AgentDepsT]], AbstractToolset[AgentDepsT] | Awaitable[AbstractToolset[AgentDepsT]]]'
+ToolsetFunc: TypeAlias = (
+    'Callable[[RunContext[AgentDepsT]], AbstractToolset[AgentDepsT] | Awaitable[AbstractToolset[AgentDepsT]]]'
+)
 """An sync/async function which takes a run context and returns a toolset."""
 
 

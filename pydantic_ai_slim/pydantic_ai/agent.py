@@ -1644,12 +1644,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         The decorator can be used bare (`agent.toolset`).
 
-        Overloads for every possible signature of `toolset` are included so the decorator doesn't obscure
-        the type of the function.
-
         Example:
         ```python
         from pydantic_ai import Agent, RunContext
+        from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
         agent = Agent('test', deps_type=str)
 
@@ -1792,7 +1790,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         return schema  # pyright: ignore[reportReturnType]
 
-    async def _materialize_toolset_functions(self, run_context: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]]:
+    async def _materialize_toolset_functions(
+        self, run_context: RunContext[AgentDepsT]
+    ) -> list[AbstractToolset[AgentDepsT]]:
         materialized_toolsets: list[AbstractToolset[AgentDepsT]] = []
 
         for toolset_function in self._toolset_functions:
@@ -2355,7 +2355,6 @@ class AgentRunResult(Generic[OutputDataT]):
     @deprecated('`result.data` is deprecated, use `result.output` instead.')
     def data(self) -> OutputDataT:
         return self.output
-
 
     def _set_output_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
         """Set return content for the output tool.

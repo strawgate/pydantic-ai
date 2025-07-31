@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, TypeAlias
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
+
+
+ToolsetFunc: TypeAlias = 'Callable[[RunContext[AgentDepsT]], AbstractToolset[AgentDepsT]]'
+"""Definition of a function that returns a toolset based on the run context."""
 
 
 class SchemaValidatorProt(Protocol):

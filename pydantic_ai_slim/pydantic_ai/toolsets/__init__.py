@@ -1,4 +1,4 @@
-from .abstract import AbstractToolset, ToolsetTool
+from .abstract import AbstractToolset, ToolsetFunc, ToolsetTool
 from .combined import CombinedToolset
 from .deferred import DeferredToolset
 from .filtered import FilteredToolset
@@ -10,6 +10,7 @@ from .wrapper import WrapperToolset
 
 __all__ = (
     'AbstractToolset',
+    'ToolsetFunc',
     'ToolsetTool',
     'CombinedToolset',
     'DeferredToolset',

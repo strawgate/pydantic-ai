@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import Literal, TypeVar
+from typing import TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,9 +15,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.dynamic import DynamicToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -628,97 +626,3 @@ async def test_tool_manager_multiple_failed_tools():
 
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
-
-
-async def test_dynamic_toolset():
-    """Test that the dynamic toolset correctly handles nested context managers."""
-
-    something_context: RunContext[str] = build_run_context(deps='something')
-    something_else_context: RunContext[str] = build_run_context(deps='something_else')
-    nothing_context: RunContext[str] = build_run_context(deps='nothing')
-
-    something_toolset = FunctionToolset[str]()
-
-    something_else_toolset = FunctionToolset[str]()
-
-    nothing_toolset = FunctionToolset[str]()
-
-    async def prepare_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
-        if ctx.deps == 'something':
-            return something_toolset
-        elif ctx.deps == 'something_else':
-            return something_else_toolset
-        else:
-            return nothing_toolset
-
-    dynamic_toolset: DynamicToolset[str] = DynamicToolset[str](build_toolset_fn=prepare_toolset)
-
-    # Enter the first context manager
-    async with dynamic_toolset:
-        assert dynamic_toolset.toolset is None
-
-        # The toolset is built dynamically on the first call to get_tools within the context
-        _ = await dynamic_toolset.get_tools(something_context)
-        assert dynamic_toolset.toolset == something_toolset
-        assert dynamic_toolset._toolset_stack.get() == [something_toolset]  # pyright: ignore[reportPrivateUsage]
-
-        # Enter the second context manager
-        async with dynamic_toolset:
-            # The toolset appears empty, and is built on the call to get_tools
-            assert dynamic_toolset.toolset is None
-            _ = await dynamic_toolset.get_tools(nothing_context)
-            assert dynamic_toolset.toolset == nothing_toolset
-            assert dynamic_toolset._toolset_stack.get() == [something_toolset, nothing_toolset]  # pyright: ignore[reportPrivateUsage]
-
-            # Enter the third context manager
-            async with dynamic_toolset:
-                # The toolset appears empty, and is built on the call to get_tools
-                assert dynamic_toolset.toolset is None
-                _ = await dynamic_toolset.get_tools(something_else_context)
-                assert dynamic_toolset.toolset == something_else_toolset
-                assert dynamic_toolset._toolset_stack.get() == [  # pyright: ignore[reportPrivateUsage]
-                    something_toolset,
-                    nothing_toolset,
-                    something_else_toolset,
-                ]
-
-            # Ensure the toolset reverts to the 2nd toolset
-            _ = await dynamic_toolset.get_tools(nothing_context)
-            assert dynamic_toolset.toolset == nothing_toolset
-            assert dynamic_toolset._toolset_stack.get() == [something_toolset, nothing_toolset]  # pyright: ignore[reportPrivateUsage]
-
-        # Ensure the toolset reverts to the 1st toolset
-        assert dynamic_toolset.toolset == something_toolset
-        assert dynamic_toolset._toolset_stack.get() == [something_toolset]  # pyright: ignore[reportPrivateUsage]
-
-    # Ensure the toolset is empty after exiting all context managers
-    async with dynamic_toolset:
-        assert dynamic_toolset.toolset is None
-        assert dynamic_toolset._toolset_stack.get() == [None]  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_dynamic_toolset_call():
-    """Test that the dynamic toolset correctly handles nested context managers."""
-
-    something_context: RunContext[str] = build_run_context(deps='something')
-
-    def test_something(ctx: RunContext[str]) -> Literal['something']:
-        return 'something'
-
-    async def prepare_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
-        toolset = FunctionToolset[str]()
-        toolset.add_function(test_something)
-        return toolset
-
-    dynamic_toolset: DynamicToolset[str] = DynamicToolset[str](build_toolset_fn=prepare_toolset)
-
-    # Enter the first context manager
-    async with dynamic_toolset:
-        # The toolset is built dynamically on the first call to get_tools within the context
-        tools = await dynamic_toolset.get_tools(something_context)
-
-        first_tool = tools['test_something']
-        first_tool_result = await dynamic_toolset.call_tool(
-            name='test_something', tool_args={}, ctx=something_context, tool=first_tool
-        )
-        assert first_tool_result == 'something'

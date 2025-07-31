@@ -46,6 +46,7 @@ from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -3699,6 +3700,44 @@ def test_override_toolsets():
         result = agent.run_sync('Hello', toolsets=[bar_toolset])
     assert available_tools[-1] == snapshot(['baz'])
     assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+
+def test_toolset_decorator():
+    toolset = FunctionToolset()
+
+    @toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'
+
+    available_tools: list[str] = []
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        nonlocal available_tools
+        available_tools = [tool_def.name for tool_def in tool_defs]
+        return tool_defs
+
+    toolset_creation_count = 0
+
+    def create_function_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal toolset_creation_count
+        toolset_creation_count += 1
+        return toolset
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('foo')])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('foo')])
+        else:
+            return ModelResponse(parts=[TextPart('Done')])
+
+    agent = Agent(FunctionModel(respond), toolsets=[create_function_toolset], prepare_tools=prepare_tools)
+
+    run_result = agent.run_sync('Hello')
+
+    assert run_result._state.run_step == 3  # pyright: ignore[reportPrivateUsage]
+    assert len(available_tools) == 1
+    assert toolset_creation_count == 1
 
 
 def test_adding_tools_during_run():

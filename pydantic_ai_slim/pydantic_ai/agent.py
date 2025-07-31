@@ -51,7 +51,7 @@ from .tools import (
     ToolPrepareFunc,
     ToolsPrepareFunc,
 )
-from .toolsets import AbstractToolset
+from .toolsets import AbstractToolset, ToolsetFunc
 from .toolsets.combined import CombinedToolset
 from .toolsets.function import FunctionToolset
 from .toolsets.prepared import PreparedToolset
@@ -165,6 +165,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: Sequence[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
+    _toolset_functions: Sequence[ToolsetFunc[AgentDepsT]] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
@@ -192,7 +193,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -223,7 +224,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -278,7 +279,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -421,7 +422,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
-        self._user_toolsets = toolsets or ()
+        self._user_toolsets = [toolset for toolset in toolsets or [] if isinstance(toolset, AbstractToolset)]
+        self._toolset_functions = [toolset for toolset in toolsets or [] if not isinstance(toolset, AbstractToolset)]
 
         self.history_processors = history_processors or []
 
@@ -772,7 +774,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        toolset = self._get_toolset(
+            output_toolset=output_toolset,
+            additional_toolsets=[*(toolsets or []), *[func(run_context) for func in self._toolset_functions]],
+        )
+
         # This will raise errors for any name conflicts
         async with toolset:
             run_toolset = await ToolManager[AgentDepsT].build(toolset, run_context)
@@ -1624,6 +1630,49 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         return tool_decorator if func is None else tool_decorator(func)
 
+    def toolset(
+        self,
+        func: ToolsetFunc[AgentDepsT] | None = None,
+        /,
+    ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]] | ToolsetFunc[AgentDepsT]:
+        """Decorator to register a toolset function.
+
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
+        Can decorate a sync or async functions.
+
+        The decorator can be used bare (`agent.toolset`).
+
+        Overloads for every possible signature of `toolset` are included so the decorator doesn't obscure
+        the type of the function.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, RunContext
+
+        agent = Agent('test', deps_type=str)
+
+        @agent.toolset
+        def simple_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
+            return FunctionToolset(foobar)
+
+        @agent.toolset
+        async def async_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
+            return FunctionToolset(foobar)
+        ```
+        """
+        if func is None:
+
+            def decorator(
+                func_: ToolsetFunc[AgentDepsT],
+            ) -> ToolsetFunc[AgentDepsT]:
+                self._toolset_functions = [*self._toolset_functions, func_]
+                return func_
+
+            return decorator
+        else:
+            self._toolset_functions = [*self._toolset_functions, func]
+            return func
+
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
 
@@ -1672,7 +1721,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    ) -> AbstractToolset[AgentDepsT]:
+    ) -> CombinedToolset[AgentDepsT]:
         """Get the complete toolset.
 
         Args:

@@ -3702,7 +3702,7 @@ def test_override_toolsets():
     assert result.output == snapshot('{"baz":"Hello from baz"}')
 
 
-def test_toolset_decorator():
+def test_toolset_factory():
     toolset = FunctionToolset()
 
     @toolset.tool
@@ -3739,6 +3739,24 @@ def test_toolset_decorator():
     assert len(available_tools) == 1
     assert toolset_creation_count == 1
 
+def test_toolset_decorator():
+    toolset = FunctionToolset()
+
+    @toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'
+
+
+    agent = Agent('test')
+
+    @agent.toolset
+    def create_function_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return toolset
+
+    agent_toolset_functions = agent._toolset_functions  # pyright: ignore[reportPrivateUsage]
+
+    assert len(agent_toolset_functions) == 1
+    assert agent_toolset_functions[0] is create_function_toolset
 
 def test_adding_tools_during_run():
     toolset = FunctionToolset()

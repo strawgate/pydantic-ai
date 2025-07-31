@@ -774,9 +774,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
+        toolsets_from_functions = await self._materialize_toolset_functions(run_context)
+
         toolset = self._get_toolset(
             output_toolset=output_toolset,
-            additional_toolsets=[*(toolsets or []), *[func(run_context) for func in self._toolset_functions]],
+            additional_toolsets=[*(toolsets or []), *toolsets_from_functions],
         )
 
         # This will raise errors for any name conflicts
@@ -1652,12 +1654,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         agent = Agent('test', deps_type=str)
 
         @agent.toolset
-        def simple_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
-            return FunctionToolset(foobar)
+        async def simple_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
+            return FunctionToolset()
 
-        @agent.toolset
-        async def async_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
-            return FunctionToolset(foobar)
         ```
         """
         if func is None:
@@ -1792,6 +1791,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         schema.raise_if_unsupported(model_profile)
 
         return schema  # pyright: ignore[reportReturnType]
+
+    async def _materialize_toolset_functions(self, run_context: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]]:
+        materialized_toolsets: list[AbstractToolset[AgentDepsT]] = []
+
+        for toolset_function in self._toolset_functions:
+            toolset = toolset_function(run_context)
+            if inspect.isawaitable(toolset):
+                materialized_toolsets.append(await toolset)
+            else:
+                materialized_toolsets.append(toolset)
+
+        return materialized_toolsets
 
     @staticmethod
     def is_model_request_node(
@@ -2344,6 +2355,7 @@ class AgentRunResult(Generic[OutputDataT]):
     @deprecated('`result.data` is deprecated, use `result.output` instead.')
     def data(self) -> OutputDataT:
         return self.output
+
 
     def _set_output_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
         """Set return content for the output tool.

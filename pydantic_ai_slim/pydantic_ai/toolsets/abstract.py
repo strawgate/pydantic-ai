@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Literal, Protocol
 
 from pydantic_core import SchemaValidator
-from typing_extensions import Self
+from typing_extensions import Self, TypeAlias
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
@@ -16,9 +16,8 @@ if TYPE_CHECKING:
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
 
-
-ToolsetFunc: TypeAlias = 'Callable[[RunContext[AgentDepsT]], AbstractToolset[AgentDepsT]]'
-"""Definition of a function that returns a toolset based on the run context."""
+ToolsetFunc: TypeAlias = 'Callable[[RunContext[AgentDepsT]], AbstractToolset[AgentDepsT] | Awaitable[AbstractToolset[AgentDepsT]]]'
+"""An sync/async function which takes a run context and returns a toolset."""
 
 
 class SchemaValidatorProt(Protocol):

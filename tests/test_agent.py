@@ -3744,25 +3744,24 @@ async def test_toolset_decorator():
     toolset = FunctionToolset()
 
     @toolset.tool
-    def foo() -> str:
-        return 'Hello from foo'
+    def foo() -> str: ...
 
-    agent = Agent('test')
+    agent: Agent[None, str] = Agent('test')
 
     @agent.toolset
     def create_function_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
         return toolset
 
-    def create_function_toolset_bare(ctx: RunContext[None]) -> AbstractToolset[None]:
+    async def create_function_toolset_async(ctx: RunContext[None]) -> AbstractToolset[None]:
         return toolset
 
-    agent.toolset(create_function_toolset_bare)
+    agent.toolset(create_function_toolset_async)
 
     agent_toolset_functions = agent._toolset_functions  # pyright: ignore[reportPrivateUsage]
 
     assert len(agent_toolset_functions) == 2
     assert agent_toolset_functions[0] is create_function_toolset
-    assert agent_toolset_functions[1] is create_function_toolset_bare
+    assert agent_toolset_functions[1] is create_function_toolset_async
 
     fake_run_context = RunContext(
         deps=None,
@@ -3775,6 +3774,8 @@ async def test_toolset_decorator():
 
     toolsets = await agent._materialize_toolset_functions(run_context=fake_run_context)  # pyright: ignore[reportPrivateUsage]
     assert len(toolsets) == 2
+    assert isinstance(toolsets[0], AbstractToolset)
+    assert isinstance(toolsets[1], AbstractToolset)
 
 
 def test_adding_tools_during_run():

@@ -1634,7 +1634,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def toolset(
         self,
-        func: ToolsetFunc[AgentDepsT] | None = None,
+        func: ToolsetFunc[AgentDepsT],
         /,
     ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]] | ToolsetFunc[AgentDepsT]:
         """Decorator to register a toolset function.
@@ -1657,18 +1657,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         ```
         """
-        if func is None:
-
-            def decorator(
-                func_: ToolsetFunc[AgentDepsT],
-            ) -> ToolsetFunc[AgentDepsT]:
-                self._toolset_functions = [*self._toolset_functions, func_]
-                return func_
-
-            return decorator
-        else:
-            self._toolset_functions = [*self._toolset_functions, func]
-            return func
+        self._toolset_functions = [*self._toolset_functions, func]
+        return func
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.

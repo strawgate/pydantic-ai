@@ -3743,9 +3743,6 @@ def test_toolset_factory():
 async def test_toolset_decorator():
     toolset = FunctionToolset()
 
-    @toolset.tool
-    def foo() -> str: ...
-
     agent: Agent[None, str] = Agent('test')
 
     @agent.toolset

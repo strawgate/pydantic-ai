@@ -16,7 +16,10 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
-from pydantic_ai.toolsets.dynamic import DynamicToolset
+from pydantic_ai.toolsets._dynamic import (
+    ToolsetFunc,
+    _DynamicToolset as DynamicToolset,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -52,7 +55,7 @@ from .tools import (
     ToolPrepareFunc,
     ToolsPrepareFunc,
 )
-from .toolsets import AbstractToolset, ToolsetFunc
+from .toolsets import AbstractToolset
 from .toolsets.combined import CombinedToolset
 from .toolsets.function import FunctionToolset
 from .toolsets.prepared import PreparedToolset
@@ -314,7 +317,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
                 This is useful if you want to customize the definition of multiple output tools or you want to register
                 a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
-            toolsets: Toolsets to register with the agent, including MCP servers.
+            toolsets: Toolsets to register with the agent, including MCP servers and functions which take a run context
+                and return a toolset. See [`ToolsetFunc`][pydantic_ai.toolsets.ToolsetFunc] for more information.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -423,7 +427,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
         self._user_toolsets = [
-            toolset if isinstance(toolset, AbstractToolset) else DynamicToolset(toolset) for toolset in toolsets or []
+            toolset if isinstance(toolset, AbstractToolset) else DynamicToolset[AgentDepsT](toolset_func=toolset)
+            for toolset in toolsets or []
         ]
 
         self.history_processors = history_processors or []
@@ -1742,7 +1747,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             user_toolsets = self._user_toolsets
 
-        all_toolsets = [self._function_toolset, *user_toolsets]
+        dynamic_toolsets = [toolset.copy() for toolset in user_toolsets if isinstance(toolset, DynamicToolset)]
+        static_toolsets = [toolset for toolset in user_toolsets if not isinstance(toolset, DynamicToolset)]
+
+        all_toolsets = [self._function_toolset, *static_toolsets, *dynamic_toolsets]
 
         if self._prepare_tools:
             all_toolsets = [PreparedToolset(CombinedToolset(all_toolsets), self._prepare_tools)]

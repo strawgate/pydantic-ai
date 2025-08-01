@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import TypeVar
+from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import Self
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
@@ -15,6 +16,8 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets._dynamic import _DynamicToolset as DynamicToolset
+from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -626,3 +629,54 @@ async def test_tool_manager_multiple_failed_tools():
 
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
+
+
+async def test_dynamic_toolset():
+    class EnterableToolset(AbstractToolset[None]):
+        entered_count = 0
+        exited_count = 0
+
+        @property
+        def depth_count(self) -> int:
+            return self.entered_count - self.exited_count
+
+        async def __aenter__(self) -> Self:
+            self.entered_count += 1
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exited_count += 1
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None
+
+    def toolset_factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return EnterableToolset()
+
+    toolset = DynamicToolset[None](toolset_func=toolset_factory)
+
+    def get_inner_toolset(toolset: DynamicToolset[None] | None) -> EnterableToolset | None:
+        assert toolset is not None
+        inner_toolset = toolset._toolset  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(inner_toolset, EnterableToolset) or inner_toolset is None
+        return inner_toolset
+
+    run_context = build_run_context(None)
+
+    async with toolset:
+        assert not toolset._toolset  # pyright: ignore[reportPrivateUsage]
+
+        tools = await toolset.get_tools(run_context)
+
+        assert (inner_toolset := get_inner_toolset(toolset))
+        assert inner_toolset.depth_count == 1
+
+    assert get_inner_toolset(toolset) is None
+
+    assert tools == {}

@@ -27,14 +27,14 @@ pytestmark = pytest.mark.anyio
 T = TypeVar('T')
 
 
-def build_run_context(deps: T) -> RunContext[T]:
+def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
         usage=Usage(),
         prompt=None,
         messages=[],
-        run_step=0,
+        run_step=run_step,
     )
 
 
@@ -542,7 +542,7 @@ async def test_tool_manager_retry_logic():
     assert call_count['other_tool'] == 1
 
     # Test for_run_step - should create new tool manager with updated retry counts
-    new_context = build_run_context(TestDeps())
+    new_context = build_run_context(TestDeps(), run_step=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     # The new tool manager should have retry count for the failed tool
@@ -565,7 +565,7 @@ async def test_tool_manager_retry_logic():
     assert call_count['failing_tool'] == 4
 
     # Create another run step
-    another_context = build_run_context(TestDeps())
+    another_context = build_run_context(TestDeps(), run_step=2)
     another_tool_manager = await new_tool_manager.for_run_step(another_context)
 
     # Should now have retry count of 2 for failing_tool
@@ -621,7 +621,7 @@ async def test_tool_manager_multiple_failed_tools():
     assert tool_manager.failed_tools == {'tool_a', 'tool_b'}  # unchanged
 
     # Create next run step - should have retry counts for both failed tools
-    new_context = build_run_context(TestDeps())
+    new_context = build_run_context(TestDeps(), run_step=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}

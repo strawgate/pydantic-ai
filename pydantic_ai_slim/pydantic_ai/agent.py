@@ -16,6 +16,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
+from pydantic_ai.toolsets.dynamic import DynamicToolset
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -164,8 +165,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     )
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
-    _user_toolsets: Sequence[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
-    _toolset_functions: Sequence[ToolsetFunc[AgentDepsT]] = dataclasses.field(repr=False)
+    _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
@@ -422,8 +422,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
-        self._user_toolsets = [toolset for toolset in toolsets or [] if isinstance(toolset, AbstractToolset)]
-        self._toolset_functions = [toolset for toolset in toolsets or [] if not isinstance(toolset, AbstractToolset)]
+        self._user_toolsets = [
+            toolset if isinstance(toolset, AbstractToolset) else DynamicToolset(toolset) for toolset in toolsets or []
+        ]
 
         self.history_processors = history_processors or []
 
@@ -774,11 +775,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        toolsets_from_functions = await self._materialize_toolset_functions(run_context)
-
         toolset = self._get_toolset(
             output_toolset=output_toolset,
-            additional_toolsets=[*(toolsets or []), *toolsets_from_functions],
+            additional_toolsets=toolsets,
         )
 
         # This will raise errors for any name conflicts
@@ -1632,11 +1631,24 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         return tool_decorator if func is None else tool_decorator(func)
 
+    @overload
+    def toolset(self, func: ToolsetFunc[AgentDepsT], /) -> ToolsetFunc[AgentDepsT]: ...
+
+    @overload
     def toolset(
         self,
-        func: ToolsetFunc[AgentDepsT],
         /,
-    ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]] | ToolsetFunc[AgentDepsT]:
+        *,
+        per_run_step: bool = True,
+    ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]]: ...
+
+    def toolset(
+        self,
+        func: ToolsetFunc[AgentDepsT] | None = None,
+        /,
+        *,
+        per_run_step: bool = True,
+    ) -> Any:
         """Decorator to register a toolset function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
@@ -1656,9 +1668,17 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             return FunctionToolset()
 
         ```
+
+        Args:
+            func: The toolset function to register.
+            per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
         """
-        self._toolset_functions = [*self._toolset_functions, func]
-        return func
+
+        def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
+            self._user_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step))
+            return func_
+
+        return toolset_decorator if func is None else toolset_decorator(func)
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
@@ -1779,20 +1799,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         schema.raise_if_unsupported(model_profile)
 
         return schema  # pyright: ignore[reportReturnType]
-
-    async def _materialize_toolset_functions(
-        self, run_context: RunContext[AgentDepsT]
-    ) -> list[AbstractToolset[AgentDepsT]]:
-        materialized_toolsets: list[AbstractToolset[AgentDepsT]] = []
-
-        for toolset_function in self._toolset_functions:
-            toolset = toolset_function(run_context)
-            if inspect.isawaitable(toolset):
-                materialized_toolsets.append(await toolset)
-            else:
-                materialized_toolsets.append(toolset)
-
-        return materialized_toolsets
 
     @staticmethod
     def is_model_request_node(

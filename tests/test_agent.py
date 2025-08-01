@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Union
@@ -3716,63 +3717,46 @@ def test_toolset_factory():
         available_tools = [tool_def.name for tool_def in tool_defs]
         return tool_defs
 
-    toolset_creation_count = 0
+    toolset_creation_counts: dict[str, int] = defaultdict(int)
 
-    def create_function_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
-        nonlocal toolset_creation_count
-        toolset_creation_count += 1
-        return toolset
+    def via_toolsets_arg(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal toolset_creation_counts
+        toolset_creation_counts['via_toolsets_arg'] += 1
+        return toolset.prefixed('via_toolsets_arg')
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('foo')])
+            return ModelResponse(parts=[ToolCallPart('via_toolsets_arg_foo')])
         elif len(messages) == 3:
-            return ModelResponse(parts=[ToolCallPart('foo')])
+            return ModelResponse(parts=[ToolCallPart('via_toolset_decorator_foo')])
         else:
             return ModelResponse(parts=[TextPart('Done')])
 
-    agent = Agent(FunctionModel(respond), toolsets=[create_function_toolset], prepare_tools=prepare_tools)
+    agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], prepare_tools=prepare_tools)
+
+    @agent.toolset
+    def via_toolset_decorator(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal toolset_creation_counts
+        toolset_creation_counts['via_toolset_decorator'] += 1
+        return toolset.prefixed('via_toolset_decorator')
+
+    @agent.toolset(per_run_step=False)
+    async def via_toolset_decorator_for_entire_run(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal toolset_creation_counts
+        toolset_creation_counts['via_toolset_decorator_for_entire_run'] += 1
+        return toolset.prefixed('via_toolset_decorator_for_entire_run')
 
     run_result = agent.run_sync('Hello')
 
     assert run_result._state.run_step == 3  # pyright: ignore[reportPrivateUsage]
-    assert len(available_tools) == 1
-    assert toolset_creation_count == 1
-
-
-async def test_toolset_decorator():
-    toolset = FunctionToolset()
-
-    agent: Agent[None, str] = Agent('test')
-
-    @agent.toolset
-    def create_function_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
-        return toolset
-
-    async def create_function_toolset_async(ctx: RunContext[None]) -> AbstractToolset[None]:
-        return toolset
-
-    agent.toolset(create_function_toolset_async)
-
-    agent_toolset_functions = agent._toolset_functions  # pyright: ignore[reportPrivateUsage]
-
-    assert len(agent_toolset_functions) == 2
-    assert agent_toolset_functions[0] is create_function_toolset
-    assert agent_toolset_functions[1] is create_function_toolset_async
-
-    fake_run_context = RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=Usage(),
-        prompt=None,
-        messages=[],
-        run_step=0,
+    assert len(available_tools) == 3
+    assert toolset_creation_counts == snapshot(
+        {
+            'via_toolsets_arg': 4,
+            'via_toolset_decorator': 4,
+            'via_toolset_decorator_for_entire_run': 1,
+        }
     )
-
-    toolsets = await agent._materialize_toolset_functions(run_context=fake_run_context)  # pyright: ignore[reportPrivateUsage]
-    assert len(toolsets) == 2
-    assert isinstance(toolsets[0], AbstractToolset)
-    assert isinstance(toolsets[1], AbstractToolset)
 
 
 def test_adding_tools_during_run():

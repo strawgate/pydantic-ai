@@ -1,6 +1,7 @@
-from .abstract import AbstractToolset, ToolsetFunc, ToolsetTool
+from .abstract import AbstractToolset, ToolsetTool
 from .combined import CombinedToolset
 from .deferred import DeferredToolset
+from .dynamic import DynamicToolset, ToolsetFunc
 from .filtered import FilteredToolset
 from .function import FunctionToolset
 from .prefixed import PrefixedToolset
@@ -14,6 +15,7 @@ __all__ = (
     'ToolsetTool',
     'CombinedToolset',
     'DeferredToolset',
+    'DynamicToolset',
     'FilteredToolset',
     'FunctionToolset',
     'PrefixedToolset',

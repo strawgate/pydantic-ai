@@ -122,7 +122,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
     def __init__(
         self,
-        agent: Agent[AgentDepsT, OutputDataT],
+        agent: Agent[AgentDepsT, OutputDataT, Any],
         *,
         # Agent.iter parameters.
         output_type: OutputSpec[OutputDataT] | None = None,

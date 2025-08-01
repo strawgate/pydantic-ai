@@ -17,9 +17,12 @@ if TYPE_CHECKING:
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
+InputDataT = TypeVar('InputDataT', default=None)
+"""Type variable for the input data of a run."""
+
 
 @dataclasses.dataclass(repr=False)
-class RunContext(Generic[AgentDepsT]):
+class RunContext(Generic[AgentDepsT, InputDataT]):
     """Information about the current call."""
 
     deps: AgentDepsT
@@ -32,6 +35,8 @@ class RunContext(Generic[AgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    input: InputDataT | None = None
+    """The input data for the run."""
     tracer: Tracer = field(default_factory=NoOpTracer)
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False

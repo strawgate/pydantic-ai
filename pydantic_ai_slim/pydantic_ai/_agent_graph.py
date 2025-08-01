@@ -105,7 +105,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
-    get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
+    get_instructions: Callable[[RunContext[DepsT, Any]], Awaitable[str | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
@@ -148,11 +148,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     user_prompt: str | Sequence[_messages.UserContent] | None
 
     instructions: str | None
-    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT, Any]]
 
     system_prompts: tuple[str, ...]
-    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
-    system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]]
+    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT, Any]]
+    system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT, Any]]
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -175,7 +175,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         message_history: list[_messages.ModelMessage] | None,
-        get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]],
+        get_instructions: Callable[[RunContext[DepsT, Any]], Awaitable[str | None]],
         run_context: RunContext[DepsT],
     ) -> tuple[list[_messages.ModelMessage], _messages.ModelRequest]:
         try:
@@ -214,7 +214,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         return messages, _messages.ModelRequest(parts, instructions=instructions)
 
     async def _reevaluate_dynamic_prompts(
-        self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
+        self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT, Any]
     ) -> None:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
         # Only proceed if there's at least one dynamic runner.

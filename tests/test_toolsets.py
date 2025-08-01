@@ -677,6 +677,24 @@ async def test_dynamic_toolset():
         assert (inner_toolset := get_inner_toolset(toolset))
         assert inner_toolset.depth_count == 1
 
+        def visitor(toolset: AbstractToolset[None]) -> None:
+            assert toolset is inner_toolset
+
+        toolset.apply(visitor)
+
     assert get_inner_toolset(toolset) is None
+
+    assert tools == {}
+
+async def test_dynamic_toolset_empty():
+
+    def no_toolset_func(ctx: RunContext[None]) -> None:
+        return None
+
+    toolset = DynamicToolset[None](toolset_func=no_toolset_func)
+
+    run_context = build_run_context(None)
+
+    tools = await toolset.get_tools(run_context)
 
     assert tools == {}

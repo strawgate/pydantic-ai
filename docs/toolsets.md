@@ -439,19 +439,27 @@ A Dynamic Toolset is a toolset that is built dynamically during an Agent run usi
 
 To use a Dynamic Toolset, you can pass a function that matches ['`ToolsetFunc`][pydantic_ai.toolsets._dynamic.ToolsetFunc] to the `toolsets` argument of the `Agent` constructor or you can wrap a compliant function in the ['`@agent.toolset`][pydantic_ai.Agent.toolset] decorator.
 
-The function will be called with the agent's [run context][pydantic_ai.tools.RunContext] and should return a [`Toolset`][pydantic_ai.toolsets.AbstractToolset] or [`None`][typing.None]. The function will be called once for each agent run step. If you are using the decorator, you can optionally provide a `per_run_step` argument to indicate whether the function should be called once for each agent run step or only once for the entire run. 
+The function will be called with the agent's [run context][pydantic_ai.tools.RunContext] and should return a [`Toolset`][pydantic_ai.toolsets.AbstractToolset] or [`None`][typing.None]. The function will be called once for each agent run step. If you are using the decorator, you can optionally provide a `per_run_step` argument to indicate whether the function should be called once for each agent run step or only once for the entire run.
 
-```python {title="dynamic_toolset.py"}
+```python {title="agent_dynamic_toolset.py", requires="function_toolset.py"}
+from function_toolset import weather_toolset
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets.function import FunctionToolset
 
 def build_toolset(ctx: RunContext) -> FunctionToolset:
-    return FunctionToolset()
+    return weather_toolset
 
+test_model = TestModel() # (1)!
 agent = Agent(
-    'openai:gpt-4o',
+    test_model,
     toolsets=[build_toolset],
 )
 
 result = agent.run_sync('Use the toolset')
+print([t.name for t in test_model.last_model_request_parameters.function_tools])
+#> ['temperature_celsius', 'temperature_fahrenheit', 'conditions']
 ```
 
 ## Building a Custom Toolset

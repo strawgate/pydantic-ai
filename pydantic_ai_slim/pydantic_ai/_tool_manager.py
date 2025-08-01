@@ -31,7 +31,9 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
 
     @classmethod
-    async def build(cls, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT, Any]) -> ToolManager[AgentDepsT]:
+    async def build(
+        cls, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT, Any]
+    ) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for a specific run step."""
         return cls(
             ctx=ctx,

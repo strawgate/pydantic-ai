@@ -313,6 +313,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
                 or add a type hint `: Agent[None, <return type>]`.
+            input_type: The type of the input data, provided via the run context to dynamic instructions / system prompts.
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
@@ -546,6 +547,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            input: Optional input model to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
@@ -722,6 +724,8 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            input: Optional input model to use for this run.
+            input_type: Optional input type to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.

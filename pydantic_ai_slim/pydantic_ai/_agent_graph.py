@@ -14,6 +14,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._run_context import InputDataT
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -92,10 +93,11 @@ class GraphAgentState:
 
 
 @dataclasses.dataclass
-class GraphAgentDeps(Generic[DepsT, OutputDataT]):
+class GraphAgentDeps(Generic[DepsT, OutputDataT, InputDataT]):
     """Dependencies/config passed to the agent graph."""
 
     user_deps: DepsT
+    user_input: InputDataT
 
     prompt: str | Sequence[_messages.UserContent] | None
     new_message_index: int
@@ -105,7 +107,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
-    get_instructions: Callable[[RunContext[DepsT, Any]], Awaitable[str | None]]
+    get_instructions: Callable[[RunContext[DepsT, InputDataT]], Awaitable[str | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
@@ -554,9 +556,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
 
 
-def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
+def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT, Any]:
     """Build a `RunContext` object from the current agent graph run context."""
-    return RunContext[DepsT](
+    return RunContext[DepsT, Any](
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         usage=ctx.state.usage,
@@ -566,6 +568,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
+        input=ctx.deps.user_input,
     )
 
 
@@ -843,14 +846,17 @@ def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
     output_type: OutputSpec[OutputT],
-) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
+    input_type: type[InputDataT],
+) -> Graph[
+    GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT], InputDataT], result.FinalResult[OutputT]
+]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (
         UserPromptNode[DepsT],
         ModelRequestNode[DepsT],
         CallToolsNode[DepsT],
     )
-    graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
+    graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any, Any], result.FinalResult[OutputT]](
         nodes=nodes,
         name=name or 'Agent',
         state_type=GraphAgentState,

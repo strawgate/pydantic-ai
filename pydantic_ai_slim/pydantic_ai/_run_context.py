@@ -27,6 +27,8 @@ class RunContext(Generic[AgentDepsT, InputDataT]):
 
     deps: AgentDepsT
     """Dependencies for the agent."""
+    input: InputDataT
+    """The input data for the run."""
     model: Model
     """The model used in this run."""
     usage: Usage
@@ -35,8 +37,6 @@ class RunContext(Generic[AgentDepsT, InputDataT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
-    input: InputDataT | None = None
-    """The input data for the run."""
     tracer: Tracer = field(default_factory=NoOpTracer)
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False

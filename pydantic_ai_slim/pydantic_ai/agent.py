@@ -25,6 +25,7 @@ from . import (
     _system_prompt,
     _utils,
     exceptions,
+    format_as_xml,
     messages as _messages,
     models,
     result,
@@ -154,7 +155,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
-    _input_type: type[InputDataT] | None = dataclasses.field(repr=False)
+    _input_type: type[InputDataT] = dataclasses.field(repr=False)
 
     _deprecated_result_tool_name: str | None = dataclasses.field(repr=False)
     _deprecated_result_tool_description: str | None = dataclasses.field(repr=False)
@@ -193,7 +194,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
         | None = None,
         system_prompt: str | Sequence[str] = (),
-        input_type: type[InputDataT] | None = None,
+        input_type: type[InputDataT] = NoneType,
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
@@ -223,7 +224,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
         | None = None,
         system_prompt: str | Sequence[str] = (),
-        input_type: type[InputDataT] | None = None,
+        input_type: type[InputDataT] = NoneType,
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
@@ -253,7 +254,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
         | None = None,
         system_prompt: str | Sequence[str] = (),
-        input_type: type[InputDataT] | None = None,
+        input_type: type[InputDataT] = NoneType,
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
@@ -282,7 +283,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
         | None = None,
         system_prompt: str | Sequence[str] = (),
-        input_type: type[InputDataT] | None = None,
+        input_type: type[InputDataT] = NoneType,
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
@@ -464,7 +465,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -481,7 +482,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -499,7 +500,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -515,7 +516,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -572,6 +573,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         async with self.iter(
             user_prompt=user_prompt,
             output_type=output_type,
+            input=input,
             message_history=message_history,
             model=model,
             deps=deps,
@@ -594,7 +596,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -612,7 +614,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -631,7 +633,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -648,7 +650,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        input: InputDataT | None = None,
+        input: InputDataT = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -768,9 +770,9 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
                 output_toolset.output_validators = output_validators
 
         # Build the graph
-        graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
-            _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
-        )
+        graph: Graph[
+            _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any, Any], FinalResult[Any]
+        ] = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_, self._input_type)
 
         # Build the initial state
         usage = usage or _usage.Usage()
@@ -825,6 +827,9 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
                     *[await func.run(run_context) for func in self._instructions_functions],
                 ]
 
+                if not self._instructions_functions and input is not None:
+                    parts.append(format_as_xml(obj=input))
+
                 model_profile = model_used.profile
                 if isinstance(output_schema, _output.PromptedOutputSchema):
                     instructions = output_schema.instructions(model_profile.prompted_output_template)
@@ -835,7 +840,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
                     return None
                 return '\n\n'.join(parts).strip()
 
-            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT, InputDataT](
                 user_deps=deps,
                 prompt=user_prompt,
                 new_message_index=new_message_index,
@@ -851,6 +856,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
                 tracer=tracer,
                 get_instructions=get_instructions,
                 instrumentation_settings=instrumentation_settings,
+                user_input=input,
             )
             start_node = _agent_graph.UserPromptNode[AgentDepsT](
                 user_prompt=user_prompt,
@@ -915,6 +921,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        input: InputDataT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -931,6 +938,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        input: InputDataT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -948,6 +956,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        input: InputDataT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -963,6 +972,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        input: InputDataT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -993,6 +1003,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            input: Optional input to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -1017,6 +1028,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
             self.run(
                 user_prompt,
                 output_type=output_type,
+                input=input,
                 message_history=message_history,
                 model=model,
                 deps=deps,
@@ -1085,6 +1097,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        input: InputDataT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -1141,6 +1154,7 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         async with self.iter(
             user_prompt,
             output_type=output_type,
+            input=input,
             message_history=message_history,
             model=model,
             deps=deps,
@@ -1258,13 +1272,13 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
 
     @overload
     def instructions(
-        self, func: Callable[[RunContext[AgentDepsT]], str], /
-    ) -> Callable[[RunContext[AgentDepsT]], str]: ...
+        self, func: Callable[[RunContext[AgentDepsT, InputDataT]], str], /
+    ) -> Callable[[RunContext[AgentDepsT, InputDataT]], str]: ...
 
     @overload
     def instructions(
-        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str]], /
-    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]: ...
+        self, func: Callable[[RunContext[AgentDepsT, InputDataT]], Awaitable[str]], /
+    ) -> Callable[[RunContext[AgentDepsT, InputDataT]], Awaitable[str]]: ...
 
     @overload
     def instructions(self, func: Callable[[], str], /) -> Callable[[], str]: ...
@@ -1275,15 +1289,21 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
     @overload
     def instructions(
         self, /
-    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]: ...
+    ) -> Callable[
+        [_system_prompt.SystemPromptFunc[AgentDepsT, InputDataT]],
+        _system_prompt.SystemPromptFunc[AgentDepsT, InputDataT],
+    ]: ...
 
     def instructions(
         self,
-        func: _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        func: _system_prompt.SystemPromptFunc[AgentDepsT, InputDataT] | None = None,
         /,
     ) -> (
-        Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        Callable[
+            [_system_prompt.SystemPromptFunc[AgentDepsT, InputDataT]],
+            _system_prompt.SystemPromptFunc[AgentDepsT, InputDataT],
+        ]
+        | _system_prompt.SystemPromptFunc[AgentDepsT, InputDataT]
     ):
         """Decorator to register an instructions function.
 
@@ -1313,14 +1333,14 @@ class Agent(Generic[AgentDepsT, OutputDataT, InputDataT]):
         if func is None:
 
             def decorator(
-                func_: _system_prompt.SystemPromptFunc[AgentDepsT],
-            ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
-                self._instructions_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT, Any](func_))
+                func_: _system_prompt.SystemPromptFunc[AgentDepsT, InputDataT],
+            ) -> _system_prompt.SystemPromptFunc[AgentDepsT, InputDataT]:
+                self._instructions_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT, InputDataT](func_))
                 return func_
 
             return decorator
         else:
-            self._instructions_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT, Any](func))
+            self._instructions_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT, InputDataT](func))
             return func
 
     @overload

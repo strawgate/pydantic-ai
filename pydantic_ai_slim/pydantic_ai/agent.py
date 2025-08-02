@@ -25,7 +25,6 @@ from . import (
     _system_prompt,
     _utils,
     exceptions,
-    format_as_xml,
     messages as _messages,
     models,
     result,
@@ -34,6 +33,7 @@ from . import (
 from ._agent_graph import HistoryProcessor
 from ._output import OutputToolset
 from ._tool_manager import ToolManager
+from .format_prompt import format_as_xml
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
 from .profiles import ModelProfile

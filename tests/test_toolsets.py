@@ -690,17 +690,25 @@ async def test_dynamic_toolset():
     async with toolset:
         assert not toolset._toolset  # pyright: ignore[reportPrivateUsage]
 
+        # Test that calling get_tools initializes the toolset
         tools = await toolset.get_tools(run_context)
 
         assert (inner_toolset := get_inner_toolset(toolset))
         assert inner_toolset.depth_count == 1
 
+        # Test that the visitor applies when the toolset is initialized
         def visitor(toolset: AbstractToolset[None]) -> None:
             assert toolset is inner_toolset
 
         toolset.apply(visitor)
 
     assert get_inner_toolset(toolset) is None
+
+    # Test that the visitor doesn't apply when the toolset is not initialized
+    def crash_visitor(toolset: AbstractToolset[None]) -> None:
+        raise Exception('crash')  # pragma: no cover
+
+    assert toolset.apply(crash_visitor) is None
 
     assert tools == {}
 
@@ -716,3 +724,12 @@ async def test_dynamic_toolset_empty():
     tools = await toolset.get_tools(run_context)
 
     assert tools == {}
+
+    async with toolset:
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+        tools = await toolset.get_tools(run_context)
+
+        assert tools == {}
+
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]

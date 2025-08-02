@@ -426,10 +426,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
-        self._user_toolsets = [
-            toolset if isinstance(toolset, AbstractToolset) else DynamicToolset[AgentDepsT](toolset_func=toolset)
+        self._dynamic_toolsets = [
+            DynamicToolset[AgentDepsT](toolset_func=toolset)
             for toolset in toolsets or []
+            if not isinstance(toolset, AbstractToolset)
         ]
+        self._user_toolsets = [toolset for toolset in toolsets or [] if isinstance(toolset, AbstractToolset)]
 
         self.history_processors = history_processors or []
 
@@ -1680,7 +1682,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
-            self._user_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step))
+            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step))
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
@@ -1747,10 +1749,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             user_toolsets = self._user_toolsets
 
-        dynamic_toolsets = [toolset.copy() for toolset in user_toolsets if isinstance(toolset, DynamicToolset)]
-        static_toolsets = [toolset for toolset in user_toolsets if not isinstance(toolset, DynamicToolset)]
+        dynamic_toolsets = [toolset.copy() for toolset in self._dynamic_toolsets]
 
-        all_toolsets = [self._function_toolset, *static_toolsets, *dynamic_toolsets]
+        all_toolsets = [self._function_toolset, *user_toolsets, *dynamic_toolsets]
 
         if self._prepare_tools:
             all_toolsets = [PreparedToolset(CombinedToolset(all_toolsets), self._prepare_tools)]

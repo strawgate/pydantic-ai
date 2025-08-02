@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets._dynamic import _DynamicToolset as DynamicToolset
+from pydantic_ai.toolsets._dynamic import _DynamicToolset as DynamicToolset  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
@@ -500,6 +500,24 @@ async def test_context_manager_failed_initialization():
     assert server1.is_running is False
 
 
+async def test_tool_manager_reuse_self():
+    """Test the retry logic with failed_tools and for_run_step method."""
+
+    run_context = build_run_context(None, run_step=1)
+
+    tool_manager = ToolManager[None](run_context, FunctionToolset[None](), tools={})
+
+    same_tool_manager = await tool_manager.for_run_step(ctx=run_context)
+
+    assert tool_manager is same_tool_manager
+
+    step_2_context = build_run_context(None, run_step=2)
+
+    updated_tool_manager = await tool_manager.for_run_step(ctx=step_2_context)
+
+    assert tool_manager != updated_tool_manager
+
+
 async def test_tool_manager_retry_logic():
     """Test the retry logic with failed_tools and for_run_step method."""
 
@@ -654,7 +672,7 @@ async def test_dynamic_toolset():
         async def call_tool(
             self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
         ) -> Any:
-            return None
+            return None  # pragma: no cover
 
     def toolset_factory(ctx: RunContext[None]) -> AbstractToolset[None]:
         return EnterableToolset()
@@ -686,8 +704,8 @@ async def test_dynamic_toolset():
 
     assert tools == {}
 
-async def test_dynamic_toolset_empty():
 
+async def test_dynamic_toolset_empty():
     def no_toolset_func(ctx: RunContext[None]) -> None:
         return None
 

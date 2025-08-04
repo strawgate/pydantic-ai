@@ -451,7 +451,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 def build_toolset(ctx: RunContext) -> FunctionToolset:
     return weather_toolset
 
-test_model = TestModel() # (1)!
+test_model = TestModel()
 agent = Agent(
     test_model,
     toolsets=[build_toolset],

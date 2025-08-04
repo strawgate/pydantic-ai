@@ -17,8 +17,8 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
 from pydantic_ai.toolsets._dynamic import (
+    DynamicToolset,
     ToolsetFunc,
-    _DynamicToolset as DynamicToolset,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -1735,7 +1735,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    ) -> CombinedToolset[AgentDepsT]:
+    ) -> AbstractToolset[AgentDepsT]:
         """Get the complete toolset.
 
         Args:
@@ -1744,14 +1744,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         if some_user_toolsets := self._override_toolsets.get():
             user_toolsets = some_user_toolsets.value
-        elif additional_toolsets is not None:
-            user_toolsets = [*self._user_toolsets, *additional_toolsets]
         else:
-            user_toolsets = self._user_toolsets
+            dynamic_toolsets = [dataclasses.replace(toolset) for toolset in self._dynamic_toolsets]
 
-        dynamic_toolsets = [toolset.copy() for toolset in self._dynamic_toolsets]
+            additional_toolsets = additional_toolsets or []
 
-        all_toolsets = [self._function_toolset, *user_toolsets, *dynamic_toolsets]
+            user_toolsets = [*dynamic_toolsets, *self._user_toolsets, *additional_toolsets]
+
+        all_toolsets = [self._function_toolset, *user_toolsets]
 
         if self._prepare_tools:
             all_toolsets = [PreparedToolset(CombinedToolset(all_toolsets), self._prepare_tools)]

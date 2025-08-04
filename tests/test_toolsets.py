@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets._dynamic import _DynamicToolset as DynamicToolset  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset

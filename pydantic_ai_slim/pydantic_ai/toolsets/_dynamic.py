@@ -17,8 +17,8 @@ ToolsetFunc: TypeAlias = Callable[
 """An sync/async function which takes a run context and returns a toolset."""
 
 
-@dataclass()
-class _DynamicToolset(AbstractToolset[AgentDepsT]):
+@dataclass
+class DynamicToolset(AbstractToolset[AgentDepsT]):
     """A toolset that dynamically builds a toolset using a function that takes the run context.
 
     The DynamicToolset should only be provided to a single Agent run and provides a convenient copy method to ensure
@@ -71,6 +71,3 @@ class _DynamicToolset(AbstractToolset[AgentDepsT]):
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         if self._toolset is not None:
             self._toolset.apply(visitor)
-
-    def copy(self) -> _DynamicToolset[AgentDepsT]:
-        return _DynamicToolset(toolset_func=self.toolset_func, per_run_step=self.per_run_step)

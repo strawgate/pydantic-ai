@@ -155,8 +155,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
-    _deprecated_result_tool_name: str | None = dataclasses.field(repr=False)
-    _deprecated_result_tool_description: str | None = dataclasses.field(repr=False)
     _output_schema: _output.BaseOutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
     _instructions: str | None = dataclasses.field(repr=False)
@@ -204,43 +202,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     ) -> None: ...
 
     @overload
-    @deprecated(
-        '`result_type`, `result_tool_name` & `result_tool_description` are deprecated, use `output_type` instead. `result_retries` is deprecated, use `output_retries` instead.'
-    )
-    def __init__(
-        self,
-        model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        result_type: type[OutputDataT] = str,
-        instructions: str
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
-        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | None = None,
-        system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
-        name: str | None = None,
-        model_settings: ModelSettings | None = None,
-        retries: int = 1,
-        result_tool_name: str = _output.DEFAULT_OUTPUT_TOOL_NAME,
-        result_tool_description: str | None = None,
-        result_retries: int | None = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
-        defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-    ) -> None: ...
-
-    @overload
     @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
     def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        result_type: type[OutputDataT] = str,
+        output_type: OutputSpec[OutputDataT] = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
@@ -250,9 +217,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
-        result_tool_name: str = _output.DEFAULT_OUTPUT_TOOL_NAME,
-        result_tool_description: str | None = None,
-        result_retries: int | None = None,
+        output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -267,8 +232,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        # TODO change this back to `output_type: _output.OutputType[OutputDataT] = str,` when we remove the overloads
-        output_type: Any = str,
+        output_type: OutputSpec[OutputDataT] = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
@@ -346,41 +310,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.name = name
         self.model_settings = model_settings
 
-        if 'result_type' in _deprecated_kwargs:
-            if output_type is not str:  # pragma: no cover
-                raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning, stacklevel=2)
-            output_type = _deprecated_kwargs.pop('result_type')
-
         self.output_type = output_type
-
         self.instrument = instrument
-
         self._deps_type = deps_type
-
-        self._deprecated_result_tool_name = _deprecated_kwargs.pop('result_tool_name', None)
-        if self._deprecated_result_tool_name is not None:
-            warnings.warn(
-                '`result_tool_name` is deprecated, use `output_type` with `ToolOutput` instead',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        self._deprecated_result_tool_description = _deprecated_kwargs.pop('result_tool_description', None)
-        if self._deprecated_result_tool_description is not None:
-            warnings.warn(
-                '`result_tool_description` is deprecated, use `output_type` with `ToolOutput` instead',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        result_retries = _deprecated_kwargs.pop('result_retries', None)
-        if result_retries is not None:
-            if output_retries is not None:  # pragma: no cover
-                raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
-            warnings.warn(
-                '`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning, stacklevel=2
-            )
-            output_retries = result_retries
 
         if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
             if toolsets is not None:  # pragma: no cover
@@ -394,12 +326,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
         )
 
-        self._output_schema = _output.OutputSchema[OutputDataT].build(
-            output_type,
-            default_mode=default_output_mode,
-            name=self._deprecated_result_tool_name,
-            description=self._deprecated_result_tool_description,
-        )
+        self._output_schema = _output.OutputSchema[OutputDataT].build(output_type, default_mode=default_output_mode)
         self._output_validators = []
 
         self._instructions = ''
@@ -482,23 +409,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    @overload
-    @deprecated('`result_type` is deprecated, use `output_type` instead.')
-    async def run(
-        self,
-        user_prompt: str | Sequence[_messages.UserContent] | None = None,
-        *,
-        result_type: type[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    ) -> AgentRunResult[RunOutputDataT]: ...
-
     async def run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
@@ -549,12 +459,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
-            if output_type is not str:
-                raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
-            output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
@@ -608,23 +512,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
-
-    @overload
-    @deprecated('`result_type` is deprecated, use `output_type` instead.')
-    def iter(
-        self,
-        user_prompt: str | Sequence[_messages.UserContent] | None = None,
-        *,
-        result_type: type[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, Any]]: ...
 
     @asynccontextmanager
     async def iter(
@@ -723,12 +610,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self._infer_name(inspect.currentframe())
         model_used = self._get_model(model)
         del model
-
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
-            if output_type is not str:
-                raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
-            output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
@@ -924,23 +805,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    @overload
-    @deprecated('`result_type` is deprecated, use `output_type` instead.')
-    def run_sync(
-        self,
-        user_prompt: str | Sequence[_messages.UserContent] | None = None,
-        *,
-        result_type: type[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    ) -> AgentRunResult[RunOutputDataT]: ...
-
     def run_sync(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
@@ -991,12 +855,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
-            if output_type is not str:
-                raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
-            output_type = _deprecated_kwargs.pop('result_type')
-
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         return get_event_loop().run_until_complete(
@@ -1045,25 +903,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
-    @overload
-    @deprecated('`result_type` is deprecated, use `output_type` instead.')
-    def run_stream(
-        self,
-        user_prompt: str | Sequence[_messages.UserContent] | None = None,
-        *,
-        result_type: type[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
-
     @asynccontextmanager
-    async def run_stream(  # noqa C901
+    async def run_stream(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -1114,12 +955,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
-
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
-            if output_type is not str:
-                raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
-            output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
@@ -1444,13 +1279,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         self._output_validators.append(_output.OutputValidator[AgentDepsT, Any](func))
         return func
-
-    @deprecated('`result_validator` is deprecated, use `output_validator` instead.')
-    def result_validator(self, func: Any, /) -> Any:
-        warnings.warn(
-            '`result_validator` is deprecated, use `output_validator` instead.', DeprecationWarning, stacklevel=2
-        )
-        return self.output_validator(func)  # type: ignore
 
     @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
@@ -1779,13 +1607,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             self.name = name
                             return
 
-    @property
-    @deprecated(
-        'The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.', category=None
-    )
-    def last_run_messages(self) -> list[_messages.ModelMessage]:
-        raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
-
     def _prepare_output_schema(
         self, output_type: OutputSpec[RunOutputDataT] | None, model_profile: ModelProfile
     ) -> _output.OutputSchema[RunOutputDataT]:
@@ -1793,10 +1614,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if self._output_validators:
                 raise exceptions.UserError('Cannot set a custom run `output_type` when the agent has output validators')
             schema = _output.OutputSchema[RunOutputDataT].build(
-                output_type,
-                name=self._deprecated_result_tool_name,
-                description=self._deprecated_result_tool_description,
-                default_mode=model_profile.default_structured_output_mode,
+                output_type, default_mode=model_profile.default_structured_output_mode
             )
         else:
             schema = self._output_schema.with_default_mode(model_profile.default_structured_output_mode)
@@ -2354,11 +2172,6 @@ class AgentRunResult(Generic[OutputDataT]):
             raise AttributeError('No span was created for this agent run')
         return self._traceparent_value
 
-    @property
-    @deprecated('`result.data` is deprecated, use `result.output` instead.')
-    def data(self) -> OutputDataT:
-        return self.output
-
     def _set_output_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
         """Set return content for the output tool.
 
@@ -2380,16 +2193,7 @@ class AgentRunResult(Generic[OutputDataT]):
 
         raise LookupError(f'No tool call found with tool name {self._output_tool_name!r}.')
 
-    @overload
-    def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    def all_messages(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> list[_messages.ModelMessage]:
+    def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
 
         Args:
@@ -2397,27 +2201,16 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             List of messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        if content is not None:
-            return self._set_output_tool_return(content)
+        if output_tool_return_content is not None:
+            return self._set_output_tool_return(output_tool_return_content)
         else:
             return self._state.message_history
 
-    @overload
-    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
-
-    def all_messages_json(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> bytes:
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.agent.AgentRunResult.all_messages] as JSON bytes.
 
         Args:
@@ -2425,24 +2218,15 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages(output_tool_return_content=content))
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.all_messages(output_tool_return_content=output_tool_return_content)
+        )
 
-    @overload
-    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def new_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    def new_messages(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> list[_messages.ModelMessage]:
+    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
         Messages from older runs are excluded.
@@ -2452,24 +2236,13 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             List of new messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        return self.all_messages(output_tool_return_content=content)[self._new_message_index :]
+        return self.all_messages(output_tool_return_content=output_tool_return_content)[self._new_message_index :]
 
-    @overload
-    def new_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
-
-    def new_messages_json(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> bytes:
+    def new_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return new messages from [`new_messages`][pydantic_ai.agent.AgentRunResult.new_messages] as JSON bytes.
 
         Args:
@@ -2477,13 +2250,13 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the new messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.new_messages(output_tool_return_content=content))
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.new_messages(output_tool_return_content=output_tool_return_content)
+        )
 
     def usage(self) -> _usage.Usage:
         """Return the usage of the whole run."""

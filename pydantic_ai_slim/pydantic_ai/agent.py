@@ -1656,9 +1656,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         per_run_step: bool = True,
     ) -> Any:
-        """Decorator to register a toolset function.
+        """Decorator to register a toolset function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
 
-        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
         Can decorate a sync or async functions.
 
         The decorator can be used bare (`agent.toolset`).
@@ -1673,7 +1672,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         @agent.toolset
         async def simple_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
             return FunctionToolset()
-
         ```
 
         Args:
@@ -1745,11 +1743,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if some_user_toolsets := self._override_toolsets.get():
             user_toolsets = some_user_toolsets.value
         else:
+            # Copy the dynamic toolsets to ensure each run has its own instances
             dynamic_toolsets = [dataclasses.replace(toolset) for toolset in self._dynamic_toolsets]
-
-            additional_toolsets = additional_toolsets or []
-
-            user_toolsets = [*dynamic_toolsets, *self._user_toolsets, *additional_toolsets]
+            user_toolsets = [*self._user_toolsets, *dynamic_toolsets, *(additional_toolsets or [])]
 
         all_toolsets = [self._function_toolset, *user_toolsets]
 

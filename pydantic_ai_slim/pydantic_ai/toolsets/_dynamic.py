@@ -14,15 +14,15 @@ ToolsetFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
     Union[AbstractToolset[AgentDepsT], None, Awaitable[Union[AbstractToolset[AgentDepsT], None]]],
 ]
-"""An sync/async function which takes a run context and returns a toolset."""
+"""A sync/async function which takes a run context and returns a toolset."""
 
 
 @dataclass
 class DynamicToolset(AbstractToolset[AgentDepsT]):
     """A toolset that dynamically builds a toolset using a function that takes the run context.
 
-    The DynamicToolset should only be provided to a single Agent run and provides a convenient copy method to ensure
-    each Agent run uses its own instance of the dynamic toolset.
+    It should only be used during a single agent run as it stores the generated toolset.
+    To use it multiple times, copy it using `dataclasses.replace`.
     """
 
     toolset_func: ToolsetFunc[AgentDepsT]

@@ -80,6 +80,6 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         if self._toolset is None:
-            return self
+            return super().visit_and_replace(visitor)
         else:
             return replace(self, _toolset=self._toolset.visit_and_replace(visitor))

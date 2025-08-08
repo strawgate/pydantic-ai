@@ -653,14 +653,18 @@ async def test_tool_manager_multiple_failed_tools():
 async def test_visit_and_replace():
     toolset1 = FunctionToolset(id='toolset1')
     toolset2 = FunctionToolset(id='toolset2')
-    dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: toolset2)
-    await dynamic_toolset.get_tools(build_run_context(None))
-    assert dynamic_toolset._toolset is toolset2  # pyright: ignore[reportPrivateUsage]
+
+    active_dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: toolset2)
+    await active_dynamic_toolset.get_tools(build_run_context(None))
+    assert active_dynamic_toolset._toolset is toolset2  # pyright: ignore[reportPrivateUsage]
+
+    inactive_dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: FunctionToolset())
 
     toolset = CombinedToolset(
         [
             WrapperToolset(toolset1),
-            dynamic_toolset,
+            active_dynamic_toolset,
+            inactive_dynamic_toolset,
         ]
     )
     visited_toolset = toolset.visit_and_replace(lambda toolset: WrapperToolset(toolset))
@@ -668,11 +672,12 @@ async def test_visit_and_replace():
         [
             WrapperToolset(WrapperToolset(toolset1)),
             DynamicToolset(
-                toolset_func=dynamic_toolset.toolset_func,
-                per_run_step=dynamic_toolset.per_run_step,
+                toolset_func=active_dynamic_toolset.toolset_func,
+                per_run_step=active_dynamic_toolset.per_run_step,
                 _toolset=WrapperToolset(toolset2),
-                _run_step=dynamic_toolset._run_step,  # pyright: ignore[reportPrivateUsage]
+                _run_step=active_dynamic_toolset._run_step,  # pyright: ignore[reportPrivateUsage]
             ),
+            WrapperToolset(inactive_dynamic_toolset),
         ]
     )
 

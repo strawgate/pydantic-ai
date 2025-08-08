@@ -23,6 +23,7 @@ from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
+from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import Usage
 
 pytestmark = pytest.mark.anyio
@@ -649,10 +650,41 @@ async def test_tool_manager_multiple_failed_tools():
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
 
+async def test_visit_and_replace():
+    toolset1 = FunctionToolset(id='toolset1')
+    toolset2 = FunctionToolset(id='toolset2')
+    dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: toolset2)
+    await dynamic_toolset.get_tools(build_run_context(None))
+    assert dynamic_toolset._toolset is toolset2  # pyright: ignore[reportPrivateUsage]
+
+    toolset = CombinedToolset(
+        [
+            WrapperToolset(toolset1),
+            dynamic_toolset,
+        ]
+    )
+    visited_toolset = toolset.visit_and_replace(lambda toolset: WrapperToolset(toolset))
+    assert visited_toolset == CombinedToolset(
+        [
+            WrapperToolset(WrapperToolset(toolset1)),
+            DynamicToolset(
+                toolset_func=dynamic_toolset.toolset_func,
+                per_run_step=dynamic_toolset.per_run_step,
+                _toolset=WrapperToolset(toolset2),
+                _run_step=dynamic_toolset._run_step,  # pyright: ignore[reportPrivateUsage]
+            ),
+        ]
+    )
+
+
 async def test_dynamic_toolset():
     class EnterableToolset(AbstractToolset[None]):
         entered_count = 0
         exited_count = 0
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
 
         @property
         def depth_count(self) -> int:

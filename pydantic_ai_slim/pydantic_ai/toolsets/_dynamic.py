@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
 from typing_extensions import Self, TypeAlias
@@ -30,6 +30,10 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
     _toolset: AbstractToolset[AgentDepsT] | None = None
     _run_step: int | None = None
+
+    @property
+    def id(self) -> str | None:
+        return None  # pragma: no cover
 
     async def __aenter__(self) -> Self:
         return self
@@ -71,3 +75,11 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         if self._toolset is not None:
             self._toolset.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
+    ) -> AbstractToolset[AgentDepsT]:
+        if self._toolset is None:
+            return self
+        else:
+            return replace(self, _toolset=self._toolset.visit_and_replace(visitor))

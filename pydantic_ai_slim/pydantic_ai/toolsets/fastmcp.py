@@ -8,6 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
 
 import pydantic_core
+from fastmcp.client.transports import MCPConfigTransport
 from mcp.types import (
     AudioContent,
     ContentBlock,
@@ -26,7 +27,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 
 try:
     from fastmcp.client import Client
-    from fastmcp.client.transports import MCPConfigTransport
+    from fastmcp.client.transports import FastMCPTransport, MCPConfigTransport
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import MCPConfig
     from fastmcp.server.server import FastMCP
@@ -62,7 +63,7 @@ class ToolErrorBehavior(str, Enum):
 class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """A toolset that uses a FastMCP client as the underlying toolset."""
 
-    _fastmcp_client: Client[Any] | None = None
+    _fastmcp_client: Client[Any]
     _tool_error_behavior: ToolErrorBehavior
 
     _tool_retries: int
@@ -92,7 +93,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             if self._running_count == 0 and self._fastmcp_client:
                 self._exit_stack = AsyncExitStack()
                 await self._exit_stack.enter_async_context(self._fastmcp_client)
-                self._running_count += 1
+
+            self._running_count += 1
 
         return self
 
@@ -105,37 +107,36 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         return None
 
-    @property
-    def fastmcp_client(self) -> Client[FastMCPTransport]:
-        if not self._fastmcp_client:
-            msg = 'FastMCP client not initialized'
-            raise RuntimeError(msg)
-
-        return self._fastmcp_client
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        mcp_tools: list[MCPTool] = await self.fastmcp_client.list_tools()
+        async with self:
+            mcp_tools: list[MCPTool] = await self._fastmcp_client.list_tools()
 
-        return {
-            tool.name: convert_mcp_tool_to_toolset_tool(toolset=self, mcp_tool=tool, retries=self._tool_retries)
-            for tool in mcp_tools
-        }
+            return {
+                tool.name: convert_mcp_tool_to_toolset_tool(toolset=self, mcp_tool=tool, retries=self._tool_retries)
+                for tool in mcp_tools
+            }
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        try:
-            call_tool_result: CallToolResult = await self.fastmcp_client.call_tool(name=name, arguments=tool_args)
-        except ToolError as e:
-            if self._tool_error_behavior == ToolErrorBehavior.MODEL_RETRY:
-                raise ModelRetry(message=str(object=e)) from e
-            else:
-                raise e
+        async with self:
+            try:
+                call_tool_result: CallToolResult = await self._fastmcp_client.call_tool(name=name, arguments=tool_args)
+            except ToolError as e:
+                if self._tool_error_behavior == ToolErrorBehavior.MODEL_RETRY:
+                    raise ModelRetry(message=str(object=e)) from e
+                else:
+                    raise e
 
         # We don't use call_tool_result.data at the moment because it requires the json schema to be translatable
         # back into pydantic models otherwise it will be missing data.
 
-        return call_tool_result.structured_content or _map_fastmcp_tool_results(parts=call_tool_result.content)
+        if call_tool_result.structured_content:
+            return call_tool_result.structured_content
+
+        mapped_results = _map_fastmcp_tool_results(parts=call_tool_result.content)
+
+        return mapped_results[0] if len(mapped_results) == 1 else mapped_results
 
     @classmethod
     def from_fastmcp_server(
@@ -145,6 +146,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         Example:
         ```python
+        from fastmcp import FastMCP
+
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
         fastmcp_server = FastMCP('my_server')
         @fastmcp_server.tool()
         async def my_tool(a: int, b: int) -> int:
@@ -153,7 +158,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         toolset = FastMCPToolset.from_fastmcp_server(fastmcp_server=fastmcp_server)
         ```
         """
-        fastmcp_client: Client[FastMCPTransport] = Client[FastMCPTransport](transport=fastmcp_server)
+        transport = FastMCPTransport(fastmcp_server)
+        fastmcp_client: Client[FastMCPTransport] = Client[FastMCPTransport](transport=transport)
         return cls(fastmcp_client=fastmcp_client, tool_retries=2, tool_error_behavior=tool_error_behavior)
 
     @classmethod
@@ -167,13 +173,23 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         Example:
         ```python
-        cls.from_mcp_server(name='my_server', mcp_server={
-            'cmd': 'uvx',
+        from pydantic_ai import Agent
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        time_mcp_server = {
+            'command': 'uvx',
             'args': [
-                "time-server-mcp",
+                'mcp-server-time',
             ]
-        })
+        }
+
+        toolset = FastMCPToolset.from_mcp_server(name='time_server', mcp_server=time_mcp_server)
+        agent = Agent('openai:gpt-4o', toolsets=[toolset])
+        async def main():
+            async with agent:  # (1)!
+                ...
         ```
+        1. This will start the MCP Server running over stdio.
         """
         mcp_config: MCPConfig = MCPConfig.from_dict(config={name: mcp_server})
 
@@ -187,19 +203,38 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         Example:
         ```python
-        cls.from_mcp_config(mcp_config={
+        from pydantic_ai import Agent
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        mcp_config = {
             'mcpServers': {
-                'my_server': {
-                    'cmd': 'uvx',
+                'time_server': {
+                    'command': 'uvx',
                     'args': [
-                        "time-server-mcp",
+                        'mcp-server-time',
+                    ]
+                },
+                'fetch_server': {
+                    'command': 'uvx',
+                    'args': [
+                        'mcp-server-fetch',
                     ]
                 }
             }
-        })
+        }
+
+        fastmcp_toolset = FastMCPToolset.from_mcp_config(mcp_config)
+
+        agent = Agent('openai:gpt-4o', toolsets=[fastmcp_toolset])
+        async def main():
+            async with agent:  # (1)!
+                ...
         ```
+
+        1. This will start both MCP Servers running over stdio`.
         """
-        fastmcp_client: Client[MCPConfigTransport] = Client[MCPConfigTransport](transport=mcp_config)
+        transport: MCPConfigTransport = MCPConfigTransport(config=mcp_config)
+        fastmcp_client: Client[MCPConfigTransport] = Client[MCPConfigTransport](transport=transport)
         return cls(fastmcp_client=fastmcp_client, tool_retries=2, tool_error_behavior=tool_error_behavior)
 
 
@@ -228,13 +263,7 @@ def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResu
 
 def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
     if isinstance(part, TextContent):
-        text = part.text
-        if text.startswith(('[', '{')):
-            with contextlib.suppress(ValueError):
-                result: Any = pydantic_core.from_json(text)
-                if isinstance(result, dict | list):
-                    return result  # pyright: ignore[reportUnknownVariableType, reportReturnType]
-        return text
+        return part.text
 
     if isinstance(part, ImageContent):
         return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
@@ -242,16 +271,5 @@ def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
     if isinstance(part, AudioContent):
         return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
 
-    if isinstance(part, EmbeddedResource):
-        resource = part.resource
-        if isinstance(resource, TextResourceContents):
-            return resource.text
-
-        # BlobResourceContents
-        return messages.BinaryContent(
-            data=base64.b64decode(resource.blob),
-            media_type=resource.mimeType or 'application/octet-stream',
-        )
-
-    msg = f'Unsupported/Unknown content block type: {type(part)}'
-    raise ValueError(msg)
+    msg = f'Unsupported/Unknown content block type: {type(part)}'  # pragma: no cover
+    raise ValueError(msg)  # pragma: no cover

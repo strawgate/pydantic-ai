@@ -4,7 +4,7 @@ import asyncio
 import dataclasses
 from asyncio import Task
 from collections import defaultdict, deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -822,13 +822,13 @@ async def _call_tools(
         },
     ):
 
-        async def handle_call(
+        async def handle_call_or_result(
             coro_or_task: Coroutine[
                 Any, Any, tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
             ]
             | Task[tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]],
             index: int,
-        ) -> AsyncGenerator[_messages.HandleResponseEvent, None]:
+        ) -> _messages.HandleResponseEvent | None:
             try:
                 tool_part, tool_user_part = (
                     (await coro_or_task) if isinstance(coro_or_task, Coroutine) else coro_or_task.result()
@@ -838,15 +838,16 @@ async def _call_tools(
             except exceptions.ApprovalRequired:
                 deferred_calls_by_index[index] = 'unapproved'
             else:
-                yield _messages.FunctionToolResultEvent(tool_part)
                 tool_parts_by_index[index] = tool_part
                 if tool_user_part:
                     user_parts_by_index[index] = tool_user_part
 
+                return _messages.FunctionToolResultEvent(tool_part)
+
         if tool_manager.should_sequential_tool_call(tool_calls):
             for call in tool_calls:
                 index = tool_calls.index(call)
-                async for event in handle_call(
+                if event := await handle_call_or_result(
                     _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
                     index,
                 ):
@@ -866,16 +867,13 @@ async def _call_tools(
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     index = tasks.index(task)
-                    async for event in handle_call(coro_or_task=task, index=index):
+                    if event := await handle_call_or_result(coro_or_task=task, index=index):
                         yield event
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
-    for k in sorted(tool_parts_by_index):
-        output_parts.append(tool_parts_by_index[k])
-
-    for k in sorted(user_parts_by_index):
-        output_parts.append(user_parts_by_index[k])
+    output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
+    output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     for k in sorted(deferred_calls_by_index):
         output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])

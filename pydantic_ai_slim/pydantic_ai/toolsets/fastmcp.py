@@ -4,15 +4,9 @@ import base64
 from asyncio import Lock
 from contextlib import AsyncExitStack
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
-from mcp.types import (
-    AudioContent,
-    ContentBlock,
-    ImageContent,
-    TextContent,
-    Tool as MCPTool,
-)
+from typing_extensions import Self
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR, messages
@@ -26,6 +20,14 @@ try:
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import MCPConfig
     from fastmcp.server.server import FastMCP
+    from mcp.types import (
+        AudioContent,
+        ContentBlock,
+        ImageContent,
+        TextContent,
+        Tool as MCPTool,
+    )
+
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `fastmcp` package to use the FastMCP server, '
@@ -70,6 +72,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     def __init__(
         self, fastmcp_client: Client[Any], tool_retries: int = 2, tool_error_behavior: ToolErrorBehavior | None = None
     ):
+        """Build a new FastMCPToolset.
+
+        Args:
+            fastmcp_client: The FastMCP client to use.
+            tool_retries: The number of times to retry a tool call.
+            tool_error_behavior: The behavior to take when a tool error occurs.
+        """
         self._tool_retries = tool_retries
         self._fastmcp_client = fastmcp_client
         self._enter_lock = Lock()
@@ -150,7 +159,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         async def my_tool(a: int, b: int) -> int:
             return a + b
 
-        toolset = FastMCPToolset.from_fastmcp_server(fastmcp_server=fastmcp_server)
+        FastMCPToolset.from_fastmcp_server(fastmcp_server=fastmcp_server)
         ```
         """
         transport = FastMCPTransport(fastmcp_server)
@@ -168,23 +177,15 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent
         from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
         time_mcp_server = {
-            'command': 'uvx',
-            'args': [
-                'mcp-server-time',
-            ]
+            'command': 'uv',
+            'args': ['run', 'mcp-run-python', 'stdio'],
         }
 
-        toolset = FastMCPToolset.from_mcp_server(name='time_server', mcp_server=time_mcp_server)
-        agent = Agent('openai:gpt-4o', toolsets=[toolset])
-        async def main():
-            async with agent:  # (1)!
-                ...
+        FastMCPToolset.from_mcp_server(name='time_server', mcp_server=time_mcp_server)
         ```
-        1. This will start the MCP Server running over stdio.
         """
         mcp_config: MCPConfig = MCPConfig.from_dict(config={name: mcp_server})
 
@@ -198,35 +199,23 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent
         from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
         mcp_config = {
             'mcpServers': {
-                'time_server': {
-                    'command': 'uvx',
-                    'args': [
-                        'mcp-server-time',
-                    ]
+                'first_server': {
+                    'command': 'uv',
+                    'args': ['run', 'mcp-run-python', 'stdio'],
                 },
-                'fetch_server': {
-                    'command': 'uvx',
-                    'args': [
-                        'mcp-server-fetch',
-                    ]
+                'second_server': {
+                    'command': 'uv',
+                    'args': ['run', 'mcp-run-python', 'stdio'],
                 }
             }
         }
 
-        fastmcp_toolset = FastMCPToolset.from_mcp_config(mcp_config)
-
-        agent = Agent('openai:gpt-4o', toolsets=[fastmcp_toolset])
-        async def main():
-            async with agent:  # (1)!
-                ...
+        FastMCPToolset.from_mcp_config(mcp_config)
         ```
-
-        1. This will start both MCP Servers running over stdio`.
         """
         transport: MCPConfigTransport = MCPConfigTransport(config=mcp_config)
         fastmcp_client: Client[MCPConfigTransport] = Client[MCPConfigTransport](transport=transport)

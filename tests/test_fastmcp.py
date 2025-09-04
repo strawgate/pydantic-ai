@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from mcp.types import TextContent
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -26,6 +25,7 @@ with try_import() as imports_successful:
     from mcp.types import (
         AudioContent,
         ImageContent,
+        TextContent,
     )
 
     # Import the content mapping functions for testing
@@ -57,11 +57,9 @@ async def fastmcp_server() -> FastMCP:
         return {'result': 'success', 'value': value, 'doubled': value * 2}
 
     @server.tool()
-    async def error_tool(should_fail: bool = False) -> str:
+    async def error_tool() -> str:
         """A tool that can fail for testing error handling."""
-        if should_fail:
-            raise ValueError('This is a test error')
-        return 'success'
+        raise ValueError('This is a test error')
 
     @server.tool()
     async def binary_tool() -> ImageContent:
@@ -395,7 +393,7 @@ class TestFastMCPToolsetToolCalling:
 
             with pytest.raises(ToolError, match='This is a test error'):
                 await fastmcp_toolset.call_tool(
-                    name='error_tool', tool_args={'should_fail': True}, ctx=run_context, tool=error_tool
+                    name='error_tool', tool_args={}, ctx=run_context, tool=error_tool
                 )
 
     async def test_call_tool_with_error_behavior_model_retry(
@@ -411,7 +409,7 @@ class TestFastMCPToolsetToolCalling:
             error_tool = tools['error_tool']
 
             with pytest.raises(ModelRetry, match='This is a test error'):
-                await toolset.call_tool('error_tool', {'should_fail': True}, run_context, error_tool)
+                await toolset.call_tool('error_tool', {}, run_context, error_tool)
 
 
 class TestFastMCPToolsetFactoryMethods:

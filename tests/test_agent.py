@@ -4146,7 +4146,7 @@ def test_sequential_calls():
     def call_second():
         nonlocal integer_holder
         assert integer_holder == 2
-    
+
     agent = Agent(FunctionModel(call_tools_sequential), toolsets=[sequential_toolset])
     result = agent.run_sync()
     assert result.output == snapshot('finished')

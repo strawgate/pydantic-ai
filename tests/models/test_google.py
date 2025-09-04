@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
+import re
 from typing import Any
 
 import pytest
@@ -12,7 +13,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import UsageLimitExceeded
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -111,7 +112,9 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -146,6 +149,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             requests=2,
             input_tokens=224,
             output_tokens=35,
+            tool_calls=1,
             details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
         )
     )
@@ -176,7 +180,9 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -200,7 +206,9 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -222,6 +230,25 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot('The capital of France is Paris.\n')
+
+
+async def test_google_model_builtin_code_execution_stream(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+):
+    """Test Gemini streaming only code execution result or executable_code."""
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(
+        model=model,
+        system_prompt='Be concise and always use Python to do calculations no matter how small.',
+        builtin_tools=[CodeExecutionTool()],
+    )
+    event_parts: list[str] = []
+    async with agent.run_stream(user_prompt='what is 65465-6544 * 65464-6+1.02255') as result:
+        async for chunk in result.stream_text():
+            event_parts.append(chunk)
+
+    assert event_parts == snapshot(['The answer is -428330955.97745.\n'])
 
 
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
@@ -251,11 +278,13 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=57, output_tokens=15, details={'thoughts_tokens': 155, 'text_prompt_tokens': 57}
+                    input_tokens=57, output_tokens=170, details={'thoughts_tokens': 155, 'text_prompt_tokens': 57}
                 ),
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -274,11 +303,13 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=104, output_tokens=22, details={'thoughts_tokens': 178, 'text_prompt_tokens': 104}
+                    input_tokens=104, output_tokens=200, details={'thoughts_tokens': 178, 'text_prompt_tokens': 104}
                 ),
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -551,7 +582,9 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -598,6 +631,19 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
 
     result = await agent.run('What day is today in Utrecht?')
     assert result.output == snapshot('Today is Wednesday, May 28, 2025, in Utrecht.\n')
+
+
+async def test_google_model_url_context_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[UrlContextTool()])
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+
+    assert result.output == snapshot(
+        'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
+    )
 
 
 async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
@@ -657,7 +703,9 @@ print(f'{day_of_week=}')
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -715,7 +763,9 @@ print(f'{day_of_week=}')
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
@@ -763,7 +813,9 @@ print(f'{day_of_week=}')
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -912,11 +964,13 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
                 usage=RequestUsage(
-                    input_tokens=15, output_tokens=1041, details={'thoughts_tokens': 1647, 'text_prompt_tokens': 15}
+                    input_tokens=15, output_tokens=2688, details={'thoughts_tokens': 1647, 'text_prompt_tokens': 15}
                 ),
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1068,8 +1122,9 @@ async def test_google_url_input(
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1079,9 +1134,10 @@ async def test_google_url_input(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_google_url_input_force_download(allow_model_requests: None) -> None:  # pragma: lax no cover
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
-    m = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_url_input_force_download(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+) -> None:  # pragma: lax no cover
+    m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
 
     video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4', force_download=True)
@@ -1106,7 +1162,8 @@ async def test_google_url_input_force_download(allow_model_requests: None) -> No
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
+                provider_name='google-vertex',
             ),
         ]
     )
@@ -1153,7 +1210,9 @@ async def test_google_tool_config_any_with_tool_without_args(
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1178,7 +1237,9 @@ async def test_google_tool_config_any_with_tool_without_args(
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1238,7 +1299,9 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1263,7 +1326,9 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1309,11 +1374,13 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=49, output_tokens=12, details={'thoughts_tokens': 264, 'text_prompt_tokens': 49}
+                    input_tokens=49, output_tokens=276, details={'thoughts_tokens': 264, 'text_prompt_tokens': 49}
                 ),
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1328,11 +1395,13 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
                 usage=RequestUsage(
-                    input_tokens=80, output_tokens=9, details={'thoughts_tokens': 150, 'text_prompt_tokens': 80}
+                    input_tokens=80, output_tokens=159, details={'thoughts_tokens': 150, 'text_prompt_tokens': 80}
                 ),
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1351,7 +1420,12 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Gemini does not support structured output and tools at the same time.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+        ),
+    ):
         await agent.run('What is the largest city in the user country?')
 
 
@@ -1395,7 +1469,9 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1448,7 +1524,9 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1490,7 +1568,9 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1534,11 +1614,13 @@ Don't include any text or Markdown fencing before or after.\
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=123, output_tokens=12, details={'thoughts_tokens': 132, 'text_prompt_tokens': 123}
+                    input_tokens=123, output_tokens=144, details={'thoughts_tokens': 132, 'text_prompt_tokens': 123}
                 ),
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1560,11 +1642,13 @@ Don't include any text or Markdown fencing before or after.\
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=154, output_tokens=13, details={'thoughts_tokens': 153, 'text_prompt_tokens': 154}
+                    input_tokens=154, output_tokens=166, details={'thoughts_tokens': 153, 'text_prompt_tokens': 154}
                 ),
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1616,7 +1700,9 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1657,7 +1743,9 @@ Just a small note, it's typically written as "lazy dog" (two words) and usually 
 """)
 
 
-async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_model_usage_limit_exceeded(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
 
     agent = Agent(model, system_prompt='You are a chatbot.')
@@ -1693,7 +1781,7 @@ def test_map_usage():
         RequestUsage(
             input_tokens=1,
             cache_read_tokens=9100,
-            output_tokens=2,
+            output_tokens=9502,
             input_audio_tokens=9200,
             cache_audio_read_tokens=9300,
             output_audio_tokens=9400,
@@ -1706,3 +1794,37 @@ def test_map_usage():
             },
         )
     )
+
+
+async def test_google_builtin_tools_with_other_tools(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    agent = Agent(m, builtin_tools=[UrlContextTool()])
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+    ):
+        await agent.run('What is the largest city in the user country?')
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in Mexico?')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))

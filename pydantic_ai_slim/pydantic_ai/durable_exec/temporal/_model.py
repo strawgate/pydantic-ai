@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
@@ -54,6 +54,10 @@ class TemporalStreamedResponse(StreamedResponse):
     @property
     def model_name(self) -> str:
         return self.response.model_name or ''  # pragma: no cover
+
+    @property
+    def provider_name(self) -> str:
+        return self.response.provider_name or ''  # pragma: no cover
 
     @property
     def timestamp(self) -> datetime:

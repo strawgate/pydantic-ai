@@ -4,17 +4,17 @@ from __future__ import annotations as _annotations
 
 import datetime
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from enum import IntEnum
-from typing import Annotated
+from typing import Annotated, Literal, TypeAlias
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
-from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.exceptions import ModelHTTPError
@@ -783,7 +783,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6))
+    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6, tool_calls=2))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
@@ -814,7 +814,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
-        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
         assert chunks == snapshot(
             [
                 'Hello ',
@@ -859,7 +859,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
-        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
         assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
@@ -889,7 +889,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     agent = Agent(model, output_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
-        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
         assert chunks == snapshot([(1, 2), (1, 2)])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
@@ -932,7 +932,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_output()
         assert response == snapshot((1, 2))
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=2, output_tokens=4))
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=2, output_tokens=4, tool_calls=2))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -944,6 +944,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -960,6 +961,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -1028,6 +1030,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -1227,7 +1230,7 @@ I need to use the `get_image` tool to see the image first.
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=38, output_tokens=28, details={'thoughts_tokens': 361, 'text_prompt_tokens': 38}
+                    input_tokens=38, output_tokens=389, details={'thoughts_tokens': 361, 'text_prompt_tokens': 38}
                 ),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
@@ -1254,7 +1257,7 @@ I need to use the `get_image` tool to see the image first.
                 parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
                 usage=RequestUsage(
                     input_tokens=360,
-                    output_tokens=11,
+                    output_tokens=212,
                     details={'thoughts_tokens': 201, 'text_prompt_tokens': 102, 'image_prompt_tokens': 258},
                 ),
                 model_name='gemini-2.5-pro-preview-03-25',
@@ -1487,7 +1490,8 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                provider_request_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_name='openai',
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
         ]
     )
@@ -1513,7 +1517,8 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                provider_request_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_name='openai',
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
             ModelRequest(
                 parts=[
@@ -1565,7 +1570,7 @@ Just as you wouldn't just run blindly into a busy street, you shouldn't just jum
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=801, output_tokens=1519, details={'thoughts_tokens': 794, 'text_prompt_tokens': 801}
+                    input_tokens=801, output_tokens=2313, details={'thoughts_tokens': 794, 'text_prompt_tokens': 801}
                 ),
                 model_name='gemini-2.5-flash-preview-04-17',
                 timestamp=IsDatetime(),
@@ -1683,7 +1688,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1709,7 +1714,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1760,7 +1765,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1786,7 +1791,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1839,12 +1844,12 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=9, output_tokens=44, details={'thoughts_tokens': 545, 'text_prompt_tokens': 9}
+                    input_tokens=9, output_tokens=589, details={'thoughts_tokens': 545, 'text_prompt_tokens': 9}
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id='TT9IaNfGN_DmqtsPzKnE4AE',
+                provider_response_id='TT9IaNfGN_DmqtsPzKnE4AE',
             ),
         ]
     )
@@ -1864,7 +1869,12 @@ async def test_gemini_native_output_with_tools(allow_model_requests: None, gemin
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Gemini does not support structured output and tools at the same time.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+        ),
+    ):
         await agent.run('What is the largest city in the user country?')
 
 
@@ -1910,7 +1920,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1965,7 +1975,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2013,7 +2023,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2058,12 +2068,12 @@ Don't include any text or Markdown fencing before or after.\
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=123, output_tokens=12, details={'thoughts_tokens': 318, 'text_prompt_tokens': 123}
+                    input_tokens=123, output_tokens=330, details={'thoughts_tokens': 318, 'text_prompt_tokens': 123}
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2085,12 +2095,12 @@ Don't include any text or Markdown fencing before or after.\
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=154, output_tokens=13, details={'thoughts_tokens': 94, 'text_prompt_tokens': 154}
+                    input_tokens=154, output_tokens=107, details={'thoughts_tokens': 94, 'text_prompt_tokens': 154}
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2144,7 +2154,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2170,7 +2180,7 @@ def test_map_usage():
         RequestUsage(
             input_tokens=1,
             cache_read_tokens=9100,
-            output_tokens=2,
+            output_tokens=9502,
             input_audio_tokens=9200,
             cache_audio_read_tokens=9300,
             output_audio_tokens=9400,

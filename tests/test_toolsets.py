@@ -680,10 +680,10 @@ async def test_tool_manager_sequential_tool_call():
     toolset = FunctionToolset[None]()
 
     @toolset.tool(sequential=True)
-    def tool_a(x: int) -> int: ...
+    def tool_a(x: int) -> int: ...  # pragma: no cover
 
     @toolset.tool(sequential=False)
-    def tool_b(x: int) -> int: ...
+    def tool_b(x: int) -> int: ...  # pragma: no cover
 
     tool_manager = ToolManager[None](toolset)
 

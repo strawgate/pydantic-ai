@@ -4297,28 +4297,25 @@ def test_sequential_calls():
     """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
 
     async def call_tools_sequential(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='call_first'),
-                    ToolCallPart(tool_name='call_first'),
-                    ToolCallPart(tool_name='call_first'),
-                    ToolCallPart(tool_name='call_first'),
-                    ToolCallPart(tool_name='call_first'),
-                    ToolCallPart(tool_name='call_first'),
-                    ToolCallPart(tool_name='increment_integer_holder'),
-                    ToolCallPart(tool_name='requires_approval'),
-                    ToolCallPart(tool_name='call_second'),
-                    ToolCallPart(tool_name='call_second'),
-                    ToolCallPart(tool_name='call_second'),
-                    ToolCallPart(tool_name='call_second'),
-                    ToolCallPart(tool_name='call_second'),
-                    ToolCallPart(tool_name='call_second'),
-                    ToolCallPart(tool_name='call_second'),
-                ]
-            )
-        else:
-            return ModelResponse(parts=[TextPart('finished')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='increment_integer_holder'),
+                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+            ]
+        )
 
     sequential_toolset = FunctionToolset()
 
@@ -4334,8 +4331,11 @@ def test_sequential_calls():
         nonlocal integer_holder
         integer_holder = 2
 
-    @sequential_toolset.tool(requires_approval=True)
-    def requires_approval(): ...
+    @sequential_toolset.tool()
+    def requires_approval():
+        from pydantic_ai.exceptions import ApprovalRequired
+
+        raise ApprovalRequired()
 
     @sequential_toolset.tool(sequential=False)
     def call_second():

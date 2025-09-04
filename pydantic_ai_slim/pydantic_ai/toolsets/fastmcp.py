@@ -6,7 +6,6 @@ from contextlib import AsyncExitStack
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
 
-from fastmcp.client.transports import MCPConfigTransport
 from mcp.types import (
     AudioContent,
     ContentBlock,

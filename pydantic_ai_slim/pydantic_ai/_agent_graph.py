@@ -677,7 +677,22 @@ async def process_function_tools(  # noqa: C901
                 'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
             },
         ):
-            if tool_manager.should_parallel_tool_call(calls_to_run):
+
+            def store_and_return(
+                tool_part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+                tool_user_parts: list[_messages.UserPromptPart],
+                index: int,
+            ) -> _messages.FunctionToolResultEvent:
+                tool_parts_by_index[index] = tool_part
+                user_parts_by_index[index] = tool_user_parts
+                return _messages.FunctionToolResultEvent(tool_part)
+
+            if tool_manager.should_sequential_tool_call(calls_to_run):
+                for call in calls_to_run:
+                    index = calls_to_run.index(call)
+                    tool_part, tool_user_parts = await _call_function_tool(tool_manager, call)
+                    yield store_and_return(tool_part, tool_user_parts, index)
+            else:
                 tasks = [
                     asyncio.create_task(_call_function_tool(tool_manager, call), name=call.tool_name)
                     for call in calls_to_run
@@ -689,18 +704,7 @@ async def process_function_tools(  # noqa: C901
                     for task in done:
                         index = tasks.index(task)
                         tool_part, tool_user_parts = task.result()
-                        yield _messages.FunctionToolResultEvent(tool_part)
-
-                        tool_parts_by_index[index] = tool_part
-                        user_parts_by_index[index] = tool_user_parts
-            else:
-                for call in calls_to_run:
-                    index = calls_to_run.index(call)
-
-                    tool_part, tool_user_parts = await _call_function_tool(tool_manager, call)
-                    yield _messages.FunctionToolResultEvent(tool_part)
-                    tool_parts_by_index[index] = tool_part
-                    user_parts_by_index[index] = tool_user_parts
+                        yield store_and_return(tool_part, tool_user_parts, index)
 
         # We append the results at the end, rather than as they are received, to retain a consistent ordering
         # This is mostly just to simplify testing

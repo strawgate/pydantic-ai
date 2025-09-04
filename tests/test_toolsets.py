@@ -653,6 +653,42 @@ async def test_tool_manager_multiple_failed_tools():
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
 
+async def test_tool_manager_sequential_tool_call():
+    toolset = FunctionToolset[None]()
+
+    integer_holder: int = 1
+
+    @toolset.tool(sequential=True)
+    def tool_a(x: int) -> int:
+        """Tool A that works"""
+        nonlocal integer_holder
+        assert integer_holder == 1
+        integer_holder += 1
+        return integer_holder
+
+    @toolset.tool(sequential=False)
+    def tool_b(x: int) -> int:
+        """Tool B that works"""
+        nonlocal integer_holder
+        assert integer_holder == 2
+        integer_holder += 1
+        return integer_holder
+
+    tool_manager = ToolManager[None](toolset)
+
+    prepared_tool_manager = await tool_manager.for_run_step(build_run_context(None))
+
+    assert prepared_tool_manager.should_sequential_tool_call([ToolCallPart(tool_name='tool_a', args={'x': 1})])
+    assert not prepared_tool_manager.should_sequential_tool_call([ToolCallPart(tool_name='tool_b', args={'x': 1})])
+
+    assert prepared_tool_manager.should_sequential_tool_call(
+        [ToolCallPart(tool_name='tool_a', args={'x': 1}), ToolCallPart(tool_name='tool_b', args={'x': 1})]
+    )
+    assert prepared_tool_manager.should_sequential_tool_call(
+        [ToolCallPart(tool_name='tool_b', args={'x': 1}), ToolCallPart(tool_name='tool_a', args={'x': 1})]
+    )
+
+
 async def test_visit_and_replace():
     toolset1 = FunctionToolset(id='toolset1')
     toolset2 = FunctionToolset(id='toolset2')

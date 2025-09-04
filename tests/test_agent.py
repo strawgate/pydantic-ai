@@ -4104,6 +4104,55 @@ def test_parallel_mcp_calls():
     assert result.output == snapshot('finished')
 
 
+def test_sequential_calls():
+    async def call_tools_sequential(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='call_first'),
+                    ToolCallPart(tool_name='call_first'),
+                    ToolCallPart(tool_name='call_first'),
+                    ToolCallPart(tool_name='call_first'),
+                    ToolCallPart(tool_name='call_first'),
+                    ToolCallPart(tool_name='call_first'),
+                    ToolCallPart(tool_name='increment_integer_holder'),
+                    ToolCallPart(tool_name='call_second'),
+                    ToolCallPart(tool_name='call_second'),
+                    ToolCallPart(tool_name='call_second'),
+                    ToolCallPart(tool_name='call_second'),
+                    ToolCallPart(tool_name='call_second'),
+                    ToolCallPart(tool_name='call_second'),
+                    ToolCallPart(tool_name='call_second'),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('finished')])
+
+    sequential_toolset = FunctionToolset()
+
+    integer_holder: int = 1
+
+    @sequential_toolset.tool(sequential=False)
+    def call_first():
+        nonlocal integer_holder
+        assert integer_holder == 1
+
+    @sequential_toolset.tool(sequential=True)
+    def increment_integer_holder():
+        nonlocal integer_holder
+        integer_holder = 2
+
+    @sequential_toolset.tool(sequential=False)
+    def call_second():
+        nonlocal integer_holder
+        assert integer_holder == 2
+    
+    agent = Agent(FunctionModel(call_tools_sequential), toolsets=[sequential_toolset])
+    result = agent.run_sync()
+    assert result.output == snapshot('finished')
+    assert integer_holder == 2
+
+
 def test_set_mcp_sampling_model():
     try:
         from pydantic_ai.mcp import MCPServerStdio

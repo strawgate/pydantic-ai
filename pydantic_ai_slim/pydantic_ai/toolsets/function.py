@@ -80,6 +80,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        sequential: bool = False,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -94,6 +95,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        sequential: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -156,6 +158,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                sequential,
             )
             return func_
 
@@ -172,6 +175,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        sequential: bool = False,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -195,6 +199,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether to the function requires a sequential/serial execution environment. Defaults to False.
         """
         tool = Tool[AgentDepsT](
             func,
@@ -206,6 +211,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
             strict=strict,
+            sequential=sequential,
         )
         self.add_tool(tool)
 

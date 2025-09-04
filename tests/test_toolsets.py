@@ -679,23 +679,11 @@ async def test_tool_manager_multiple_failed_tools():
 async def test_tool_manager_sequential_tool_call():
     toolset = FunctionToolset[None]()
 
-    integer_holder: int = 1
-
     @toolset.tool(sequential=True)
-    def tool_a(x: int) -> int:
-        """Tool A that works"""
-        nonlocal integer_holder
-        assert integer_holder == 1
-        integer_holder += 1
-        return integer_holder
+    def tool_a(x: int) -> int: ...
 
     @toolset.tool(sequential=False)
-    def tool_b(x: int) -> int:
-        """Tool B that works"""
-        nonlocal integer_holder
-        assert integer_holder == 2
-        integer_holder += 1
-        return integer_holder
+    def tool_b(x: int) -> int: ...
 
     tool_manager = ToolManager[None](toolset)
 

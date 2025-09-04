@@ -4294,6 +4294,8 @@ def test_parallel_mcp_calls():
 
 
 def test_sequential_calls():
+    """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
+
     async def call_tools_sequential(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
@@ -4305,6 +4307,7 @@ def test_sequential_calls():
                     ToolCallPart(tool_name='call_first'),
                     ToolCallPart(tool_name='call_first'),
                     ToolCallPart(tool_name='increment_integer_holder'),
+                    ToolCallPart(tool_name='requires_approval'),
                     ToolCallPart(tool_name='call_second'),
                     ToolCallPart(tool_name='call_second'),
                     ToolCallPart(tool_name='call_second'),
@@ -4331,14 +4334,21 @@ def test_sequential_calls():
         nonlocal integer_holder
         integer_holder = 2
 
+    @sequential_toolset.tool(requires_approval=True)
+    def requires_approval(): ...
+
     @sequential_toolset.tool(sequential=False)
     def call_second():
         nonlocal integer_holder
         assert integer_holder == 2
 
-    agent = Agent(FunctionModel(call_tools_sequential), toolsets=[sequential_toolset])
+    agent = Agent(
+        FunctionModel(call_tools_sequential), toolsets=[sequential_toolset], output_type=[str, DeferredToolRequests]
+    )
     result = agent.run_sync()
-    assert result.output == snapshot('finished')
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+    )
     assert integer_holder == 2
 
 

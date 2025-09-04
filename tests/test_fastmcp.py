@@ -6,7 +6,6 @@ import base64
 from typing import Any
 
 import pytest
-from fastmcp.exceptions import ToolError
 from inline_snapshot import snapshot
 from mcp.types import TextContent
 
@@ -21,6 +20,7 @@ from .conftest import try_import
 with try_import() as imports_successful:
     from fastmcp.client import Client
     from fastmcp.client.transports import FastMCPTransport, MCPConfigTransport
+    from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import MCPConfig
     from fastmcp.server.server import FastMCP
     from mcp.types import (

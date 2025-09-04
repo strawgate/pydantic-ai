@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import base64
-from mcp.types import BlobResourceContents
 from typing import Any
 
 import pytest
-from pydantic import AnyUrl
 from fastmcp.exceptions import ToolError
 from inline_snapshot import snapshot
+from mcp.types import TextContent
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -24,9 +24,8 @@ with try_import() as imports_successful:
     from fastmcp.mcp_config import MCPConfig
     from fastmcp.server.server import FastMCP
     from mcp.types import (
-        ImageContent,
         AudioContent,
-        BlobResourceContents,
+        ImageContent,
     )
 
     # Import the content mapping functions for testing
@@ -77,11 +76,19 @@ async def fastmcp_server() -> FastMCP:
         fake_audio_data = b'fake_audio_data'
         encoded_data = base64.b64encode(fake_audio_data).decode('utf-8')
         return AudioContent(type='audio', data=encoded_data, mimeType='audio/mpeg')
-    
+
     @server.tool()
     async def text_tool(message: str) -> str:
         """A tool that returns text content."""
         return f'Echo: {message}'
+
+    @server.tool()
+    async def text_list_tool(message: str) -> list[TextContent]:
+        """A tool that returns text content without a return annotation."""
+        return [
+            TextContent(type='text', text=f'Echo: {message}'),
+            TextContent(type='text', text=f'Echo: {message} again'),
+        ]
 
     @server.tool()
     async def text_tool_wo_return_annotation(message: str):
@@ -204,7 +211,17 @@ class TestFastMCPToolsetToolDiscovery:
             tools = await toolset.get_tools(run_context)
 
             # Should have all the tools we defined in the server
-            expected_tools = {'test_tool', 'another_tool', 'audio_tool', 'error_tool', 'binary_tool', 'text_tool', 'text_tool_wo_return_annotation', 'json_tool'}
+            expected_tools = {
+                'test_tool',
+                'another_tool',
+                'audio_tool',
+                'error_tool',
+                'binary_tool',
+                'text_tool',
+                'text_list_tool',
+                'text_tool_wo_return_annotation',
+                'json_tool',
+            }
             assert set(tools.keys()) == expected_tools
 
             # Check tool definitions
@@ -286,16 +303,8 @@ class TestFastMCPToolsetToolCalling:
                 name='binary_tool', tool_args={}, ctx=run_context, tool=binary_tool
             )
 
-            assert isinstance(result, dict)
-
             assert result == snapshot(
-                {
-                    'type': 'image',
-                    'data': 'ZmFrZV9pbWFnZV9kYXRh',
-                    'mimeType': 'image/png',
-                    'annotations': None,
-                    '_meta': None,
-                }
+                BinaryContent(data=b'fake_image_data', media_type='image/png', identifier='427d68')
             )
 
     async def test_call_tool_with_audio_content(
@@ -308,20 +317,10 @@ class TestFastMCPToolsetToolCalling:
             tools = await fastmcp_toolset.get_tools(run_context)
             audio_tool = tools['audio_tool']
 
-            result = await fastmcp_toolset.call_tool(
-                name='audio_tool', tool_args={}, ctx=run_context, tool=audio_tool
-            )
-
-            assert isinstance(result, dict)
+            result = await fastmcp_toolset.call_tool(name='audio_tool', tool_args={}, ctx=run_context, tool=audio_tool)
 
             assert result == snapshot(
-                {
-                    'type': 'audio',
-                    'data': 'ZmFrZV9hdWRpb19kYXRh',
-                    'mimeType': 'audio/mpeg',
-                    'annotations': None,
-                    '_meta': None,
-                }
+                BinaryContent(data=b'fake_audio_data', media_type='audio/mpeg', identifier='f1220f')
             )
 
     async def test_call_tool_with_text_content(
@@ -339,6 +338,14 @@ class TestFastMCPToolsetToolCalling:
             )
 
             assert result == snapshot({'result': 'Echo: Hello World'})
+
+            text_list_tool = tools['text_list_tool']
+
+            result = await fastmcp_toolset.call_tool(
+                name='text_list_tool', tool_args={'message': 'Hello World'}, ctx=run_context, tool=text_list_tool
+            )
+
+            assert result == snapshot(['Echo: Hello World', 'Echo: Hello World again'])
 
     async def test_call_tool_with_unknown_text_content(
         self,

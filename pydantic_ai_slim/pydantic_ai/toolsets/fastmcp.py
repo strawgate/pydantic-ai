@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import base64
-import contextlib
 from asyncio import Lock
 from contextlib import AsyncExitStack
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
 
-import pydantic_core
 from fastmcp.client.transports import MCPConfigTransport
 from mcp.types import (
     AudioContent,
     ContentBlock,
-    EmbeddedResource,
     ImageContent,
     TextContent,
-    TextResourceContents,
     Tool as MCPTool,
 )
 
@@ -128,15 +124,15 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise e
 
-        # We don't use call_tool_result.data at the moment because it requires the json schema to be translatable
-        # back into pydantic models otherwise it will be missing data.
+        # If any of the results are not text content, let's map them to Pydantic AI binary message parts
+        if any(not isinstance(part, TextContent) for part in call_tool_result.content):
+            return _map_fastmcp_tool_results(parts=call_tool_result.content)
 
+        # Otherwise, if we have structured content, return that
         if call_tool_result.structured_content:
             return call_tool_result.structured_content
 
-        mapped_results = _map_fastmcp_tool_results(parts=call_tool_result.content)
-
-        return mapped_results[0] if len(mapped_results) == 1 else mapped_results
+        return _map_fastmcp_tool_results(parts=call_tool_result.content)
 
     @classmethod
     def from_fastmcp_server(
@@ -256,9 +252,14 @@ def convert_mcp_tool_to_toolset_tool(
     )
 
 
-def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResult]:
+def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResult] | FastMCPToolResult:
     """Map FastMCP tool results to toolset tool results."""
-    return [_map_fastmcp_tool_result(part) for part in parts]
+    mapped_results = [_map_fastmcp_tool_result(part) for part in parts]
+
+    if len(mapped_results) == 1:
+        return mapped_results[0]
+
+    return mapped_results
 
 
 def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:

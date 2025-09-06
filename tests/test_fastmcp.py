@@ -392,9 +392,7 @@ class TestFastMCPToolsetToolCalling:
             error_tool = tools['error_tool']
 
             with pytest.raises(ToolError, match='This is a test error'):
-                await fastmcp_toolset.call_tool(
-                    name='error_tool', tool_args={}, ctx=run_context, tool=error_tool
-                )
+                await fastmcp_toolset.call_tool(name='error_tool', tool_args={}, ctx=run_context, tool=error_tool)
 
     async def test_call_tool_with_error_behavior_model_retry(
         self,

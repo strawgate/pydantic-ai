@@ -11,6 +11,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Cohere](cohere.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
+* [MiniMax](minimax.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
 * [Outlines](outlines.md)

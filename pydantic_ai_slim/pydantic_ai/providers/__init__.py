@@ -167,6 +167,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .xai import XaiProvider
 
         return XaiProvider
+    elif provider == 'minimax':
+        from .minimax import MiniMaxProvider
+
+        return MiniMaxProvider
     elif provider == 'moonshotai':
         from .moonshotai import MoonshotAIProvider
 

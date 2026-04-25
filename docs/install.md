@@ -47,6 +47,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `google` — installs [Google Model](models/google.md) dependency `google-genai` [PyPI ↗](https://pypi.org/project/google-genai){:target="_blank"}
 * `anthropic` — installs [Anthropic Model](models/anthropic.md) dependency `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
 * `groq` — installs [Groq Model](models/groq.md) dependency `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
+* `minimax` — installs [MiniMax](models/minimax.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `mistral` — installs [Mistral Model](models/mistral.md) dependency `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
 * `cohere` - installs [Cohere Model](models/cohere.md) dependency `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `bedrock` - installs [Bedrock Model](models/bedrock.md) dependency `boto3` [PyPI ↗](https://pypi.org/project/boto3){:target="_blank"}

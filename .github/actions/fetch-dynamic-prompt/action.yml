@@ -15,8 +15,9 @@ inputs:
     required: true
   logfire-read-key:
     description: >-
-      Logfire read key — pass ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}.
-      Empty/unset disables the Logfire lookup and uses the committed default.
+      Logfire read key — pass the LOGFIRE_READ_EXTERNAL_VARIABLES secret from
+      the calling workflow. Empty/unset disables the Logfire lookup and uses
+      the committed default.
     required: false
     default: ""
   logfire-base-url:

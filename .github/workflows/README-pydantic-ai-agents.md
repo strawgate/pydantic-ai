@@ -27,6 +27,13 @@ Each `.md` is the source of truth; the adjacent `.lock.yml` is the compiled
 GitHub Actions workflow. The harness is `.github/scripts/pydantic-ai-runner`
 (a `uv run --script` self-contained Pydantic AI agent).
 
+`pydantic-ai-agents-orchestrator.yml` is a plain (non-gh-aw) helper:
+`workflow_dispatch` it to fan a dispatch out to every scheduled agent above,
+sequentially with a short delay between each (input `delay-seconds`, 1–120,
+default 30), so they don't all hit the model/API at once. It excludes the
+PR-triggered self-test. Useful for an initial smoke run or a coordinated
+on-demand sweep without waiting for the crons.
+
 ## Required configuration
 
 Repository **secrets**:

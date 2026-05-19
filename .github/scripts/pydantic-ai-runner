@@ -111,7 +111,7 @@ def _split_allowed_tools(value: str | None) -> frozenset[str] | None:
     """
     if value is None:
         return None
-    names = set()
+    names: set[str] = set()
     for raw in value.split(","):
         entry = raw.strip()
         if not entry:
@@ -275,10 +275,11 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[Any]]:
     if not path or not os.path.isfile(path):
         log("no MCP config present — running without external tools")
         return []
-    cfg = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    cfg: dict[str, Any] = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
 
     servers: list[AbstractToolset[Any]] = []
-    for name, spec in (cfg.get("mcpServers") or {}).items():
+    servers_cfg: dict[str, Any] = cfg.get("mcpServers") or {}
+    for name, spec in servers_cfg.items():
         toolset: AbstractToolset[Any]
         if spec.get("type") in ("http", "sse") or spec.get("url"):
             toolset = MCPToolset(spec["url"], headers=spec.get("headers") or None)
@@ -502,14 +503,19 @@ def _http_get(url: str, timeout: float = 20.0) -> tuple[int, str]:
 
 
 _HTML_TAG_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>|<[^>]+>")
+WEBFETCH_MAX_CONTENT = 120_000
 
 
-def web_fetch(url: str, prompt: str | None = None) -> str:
-    """Fetch a URL and return its content as text (HTML reduced to text).
+def _page_to_text(body: str) -> str:
+    """Reduce an HTML (or plain) response body to readable text."""
+    text = _HTML_TAG_RE.sub(" ", body)
+    return re.sub(r"[ \t]{2,}", " ", re.sub(r"\s+\n", "\n", text)).strip()
 
-    Mirrors Claude's WebFetch signature. `prompt` is the model's extraction
-    instruction; it is echoed back so the driving model applies its own
-    reasoning to the returned content. Subject to the AWF network firewall.
+
+def _fetch_page(url: str) -> str:
+    """Fetch `url`, returning its text or an `error:` string.
+
+    Model-free and network-isolated so it is unit-testable.
     """
     if not url.startswith(("http://", "https://")):
         return "error: url must be http(s)"
@@ -517,12 +523,29 @@ def web_fetch(url: str, prompt: str | None = None) -> str:
         status, body = _http_get(url)
     except Exception as exc:  # noqa: BLE001 - network/DNS/firewall/import -> tool result
         return f"error: fetch failed: {exc}"
-    text = _HTML_TAG_RE.sub(" ", body)
-    text = re.sub(r"[ \t]{2,}", " ", re.sub(r"\s+\n", "\n", text)).strip()
-    header = f"HTTP {status} for {url}"
-    if prompt:
-        header += f"\nExtraction request: {prompt}"
-    return _clip(f"{header}\n\n{text}")
+    return f"HTTP {status} for {url}\n\n{_page_to_text(body)}"
+
+
+async def web_fetch(ctx: RunContext[None], url: str, prompt: str) -> str:
+    """Fetch a URL and answer `prompt` about its content (Claude's WebFetch).
+
+    Faithful to Claude Code: the page is fetched, reduced to text, then the
+    `prompt` is run against that content using the current run's model
+    (Claude's WebFetch uses a fast model; the harness reuses the run model).
+    Subject to the AWF network firewall.
+    """
+    page = _fetch_page(url)
+    if page.startswith("error:"):
+        return page
+    query = (
+        "Answer the request using ONLY the web page content below.\n\n"
+        f"Request: {prompt}\n\n--- PAGE CONTENT ---\n{page[:WEBFETCH_MAX_CONTENT]}"
+    )
+    try:
+        result = await Agent(ctx.model).run(query)
+    except Exception as exc:  # noqa: BLE001 - model/proxy failure -> tool result
+        return f"error: summarization failed: {exc}"
+    return str(result.output or "")
 
 
 def todo_write(todos: list[TodoItem]) -> str:
@@ -548,7 +571,9 @@ def exit_plan_mode(plan: str) -> str:
 
 # Claude tool name -> (callable, one-line description). The function names stay
 # idiomatic snake_case; `pydantic_ai.Tool` exposes them under the Claude names.
-NATIVE_TOOLS: dict[str, tuple[Callable[..., str], str]] = {
+# `Callable[..., Any]`: most tools return `str`, but WebFetch is an async
+# ctx-taking tool — pydantic-ai's `Tool` adapts both.
+NATIVE_TOOLS: dict[str, tuple[Callable[..., Any], str]] = {
     "Bash": (bash, "Run a shell command in the repository workspace."),
     "Read": (read_file, "Read a UTF-8 text file (optional line offset/limit)."),
     "Write": (write_file, "Create or overwrite a workspace text file."),
@@ -557,7 +582,7 @@ NATIVE_TOOLS: dict[str, tuple[Callable[..., str], str]] = {
     "Grep": (grep, "Recursively regex-search workspace files."),
     "Glob": (glob_search, "List workspace paths matching a glob pattern."),
     "LS": (list_dir, "List a workspace directory's entries."),
-    "WebFetch": (web_fetch, "Fetch a URL and return its text content."),
+    "WebFetch": (web_fetch, "Fetch a URL and answer a prompt about its content."),
     "TodoWrite": (todo_write, "Record the agent's task checklist."),
     "ExitPlanMode": (exit_plan_mode, "Signal the end of planning and proceed."),
 }
@@ -631,9 +656,13 @@ async def log_mcp_tools(mcp_servers: Iterable[AbstractToolset[Any]]) -> None:
     missing or renamed safe-outputs tool is immediately visible."""
     for server in mcp_servers:
         label = getattr(server, "label", None) or getattr(server, "id", "?")
+        lister = getattr(server, "list_tools", None)
+        if lister is None:
+            continue
+        names: list[str] | str
         try:
-            tools = await server.list_tools()  # type: ignore[attr-defined]
-            names: Any = [getattr(t, "name", str(t)) for t in tools]
+            tools: Any = await lister()
+            names = [str(getattr(t, "name", "?")) for t in tools]
         except Exception as exc:  # noqa: BLE001 - discovery is diagnostic only
             names = f"<list_tools failed: {exc!r}>"
         log(f"MCP server {label!r} tools={names}")

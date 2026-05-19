@@ -222,29 +222,47 @@ def test_multi_edit_replace_all(tmp_path):
     assert f.read_text(encoding="utf-8") == "b b b"
 
 
-def test_web_fetch_rejects_non_http():
-    assert har.web_fetch("ftp://x/y").startswith("error:")
-    assert har.web_fetch("file:///etc/passwd").startswith("error:")
+def test_page_to_text_strips_html():
+    assert har._page_to_text("<html><body>Hi <b>there</b><script>x()</script></body></html>") == "Hi there"
 
 
-def test_web_fetch_strips_html(monkeypatch):
-    monkeypatch.setattr(
-        har, "_http_get",
-        lambda url, timeout=20.0: (200, "<html><body>Hi <b>there</b><script>x()</script></body></html>"),
-    )
-    out = har.web_fetch("https://example.test", prompt="get the greeting")
-    assert "HTTP 200 for https://example.test" in out
-    assert "Extraction request: get the greeting" in out
-    assert "Hi there" in out and "<b>" not in out and "x()" not in out
+def test_fetch_page_rejects_non_http():
+    assert har._fetch_page("ftp://x/y").startswith("error:")
+    assert har._fetch_page("file:///etc/passwd").startswith("error:")
 
 
-def test_web_fetch_network_error_is_tool_result(monkeypatch):
+def test_fetch_page_success_and_network_error(monkeypatch):
+    monkeypatch.setattr(har, "_http_get", lambda url, timeout=20.0: (200, "<p>Hello</p>"))
+    out = har._fetch_page("https://example.test")
+    assert out.startswith("HTTP 200 for https://example.test") and "Hello" in out
+
     def boom(url, timeout=20.0):
         raise RuntimeError("blocked by firewall")
 
     monkeypatch.setattr(har, "_http_get", boom)
-    out = har.web_fetch("https://blocked.test")
-    assert out == "error: fetch failed: blocked by firewall"
+    assert har._fetch_page("https://blocked.test") == "error: fetch failed: blocked by firewall"
+
+
+def test_web_fetch_summarizes_via_run_model(monkeypatch):
+    # Faithful WebFetch: fetch then answer the prompt with the run's model.
+    # Drive it with a stub ctx exposing .model (a TestModel) — offline.
+    import asyncio
+
+    from pydantic_ai.models.test import TestModel
+
+    monkeypatch.setattr(
+        har, "_http_get", lambda url, timeout=20.0: (200, "<html>The sky is blue.</html>")
+    )
+
+    class _Ctx:
+        model = TestModel(custom_output_text="SUMMARY: sky is blue")
+
+    out = asyncio.run(har.web_fetch(_Ctx(), "https://example.test", "what colour is the sky?"))
+    assert out == "SUMMARY: sky is blue"
+    # A fetch error short-circuits before the model is consulted.
+    monkeypatch.setattr(har, "_http_get", lambda url, timeout=20.0: (_ for _ in ()).throw(RuntimeError("nope")))
+    err = asyncio.run(har.web_fetch(_Ctx(), "https://blocked.test", "x"))
+    assert err == "error: fetch failed: nope"
 
 
 def test_todo_write_acknowledges():

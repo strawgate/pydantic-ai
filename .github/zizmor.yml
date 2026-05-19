@@ -19,3 +19,11 @@ rules:
       - bots.yml
       - ci.yml
       - manually-deploy-docs.yml
+      # gh-aw-generated agentic workflow lockfiles. gh-aw injects API/GitHub
+      # secrets as job-level env by design; they are held by the AWF proxy
+      # sidecar and excluded from the agent container, not exposed to shell
+      # interpolation. The *.lock.yml are compiled artifacts — see the
+      # corresponding *.md sources.
+      - pydantic-ai-bug-hunter.lock.yml
+      - pydantic-ai-docs-drift.lock.yml
+      - pydantic-ai-pr-selftest.lock.yml

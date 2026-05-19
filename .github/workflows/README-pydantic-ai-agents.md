@@ -26,7 +26,7 @@ GitHub Actions workflow. The harness is `.github/scripts/pydantic-ai-runner`
 
 Repository **secrets**:
 
-- `OPENAI_API_KEY` — key for the MiniMax Anthropic-compatible endpoint
+- `ANTHROPIC_API_KEY` — key for the MiniMax Anthropic-compatible endpoint
   (`https://api.minimax.io/anthropic`); injected by gh-aw's AWF proxy.
 - `LOGFIRE_WRITE_TOKEN` — Logfire project write token for OTLP trace export.
 - `LOGFIRE_READ_EXTERNAL_VARIABLES_KEY` — *optional*; enables runtime prompt

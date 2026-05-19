@@ -9,6 +9,11 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+# Full git history: the agent's repo checkout is shallow by default, so
+# `git log --since=...` would see only the tip commit. fetch-depth: 0 gives
+# the agent the real commit history it needs to detect documentation drift.
+checkout:
+  fetch-depth: 0
 concurrency:
   group: ${{ github.workflow }}-docs-drift
   cancel-in-progress: true
@@ -196,90 +201,5 @@ jobs:
           emit_prompt "$PROMPT"
           echo "Loaded dynamic prompt (${#PROMPT} chars) from Logfire variable '${LOGFIRE_VARIABLE_KEY}'."
 ---
-
-# Pydantic AI Docs Drift
-
-You are running under the **Pydantic AI harness engine** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have native `bash`, `read_file`, `grep`, `list_dir` tools plus the
-gh-aw GitHub tools and the `create_issue` / `noop` safe-output tools.
-
-Repository: `${{ github.repository }}` — [Pydantic AI](https://ai.pydantic.dev/).
-Documentation lives in `docs/` (built with `mkdocs`, configured in
-`mkdocs.yml`), plus `README.md`, `CONTRIBUTING.md`, and per-package
-`AGENTS.md` files. Doc code examples are tested by `tests/test_examples.py`.
-
-## Objective
-
-Detect documentation drift — code changes that require corresponding
-documentation updates.
-
-**Noop is the expected outcome most days.** Only file an issue when the
-documentation is concretely wrong, a new public feature has zero docs, or a
-removed/renamed public interface is still referenced in docs.
-
-### Data Gathering
-
-1. Run `git log --since="7 days ago" --oneline --stat` for a summary of recent
-   commits. If there are no commits in the window, call `noop` and stop.
-2. Inventory documentation: scan `docs/`, `mkdocs.yml`, `README.md`,
-   `CONTRIBUTING.md`, and `AGENTS.md` files. Do not assume a fixed structure.
-
-### What to Look For
-
-For each commit (or group of related commits), determine whether the change
-could require documentation updates:
-
-1. **Public API changes** — new/renamed/removed classes, methods, function
-   signatures, `Agent` options, model/provider classes, CLI flags.
-2. **Behavioral changes** — altered defaults, changed exceptions/messages,
-   modified control flow affecting user-facing behavior.
-3. **New features** — anything a user or contributor needs to know about.
-4. **Dependency/tooling changes** — version bumps, new optional dependency
-   groups, changed build/test commands.
-5. **Structural changes** — moved/renamed/deleted files referenced in docs or
-   in `mkdocs.yml` nav.
-6. **Doc code examples** — code blocks in `docs/` that no longer match the API.
-
-### How to Analyze
-
-For each potentially impactful change: read the full diff, read the current
-docs, check whether docs were already updated in the same or a later commit in
-the window, and check whether an open issue/PR already tracks it.
-
-### What to Skip
-
-- Purely internal refactors with no user-facing impact.
-- Changes where docs were already updated in the same/later commit.
-- Changes already tracked by an open issue or PR.
-- Test-only changes.
-- Minor changes where existing docs are still substantially correct.
-
-### Issue Format
-
-**Title:** Brief summary (e.g., "Update agent.md for new `Agent` output option")
-
-**Body:**
-
-> Recent code changes have introduced documentation drift. The following
-> changes need corresponding documentation updates.
->
-> ## Changes Requiring Documentation Updates
->
-> ### 1. [Brief description]
-> **Commit(s):** [SHA(s)]
-> **What changed:** [Concise description]
-> **Documentation impact:** [Which doc file(s) and what specifically]
->
-> ## Suggested Actions
-> - [ ] [Specific, actionable checkbox per doc update needed]
-
-## Dynamic instructions
-
-The following are loaded at run time from the Logfire managed variable
-`gh_aw_pydantic_ai_docs_drift_prompt`, so the task can be tuned, A/B-tested, or
-rolled back from the Logfire UI without recompiling or committing this
-workflow. They **override or extend** the guidance above. If empty, the
-baked-in instructions above stand on their own.
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

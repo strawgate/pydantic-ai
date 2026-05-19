@@ -9,6 +9,11 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+# Full git history: the agent's repo checkout is shallow by default, so
+# `git log --since=...` would see only the tip commit. fetch-depth: 0 gives
+# the agent the real commit history it needs to find recent changes.
+checkout:
+  fetch-depth: 0
 concurrency:
   group: ${{ github.workflow }}-bug-hunter
   cancel-in-progress: true
@@ -142,17 +147,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: none
+      contents: read
     outputs:
       dynamic_prompt: ${{ steps.logfire.outputs.dynamic_prompt }}
     steps:
-      - name: Fetch agent prompt from Logfire managed variables
+      - name: Check out the default prompt file
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/workflows/shared/prompts/pydantic-ai-bug-hunter.md
+          sparse-checkout-cone-mode: false
+      - name: Resolve agent prompt (Logfire managed variable, else committed default)
         id: logfire
         env:
           LOGFIRE_READ_KEY: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           LOGFIRE_BASE_URL: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
           LOGFIRE_VARIABLE_KEY: gh_aw_pydantic_ai_bug_hunter_prompt
           TARGETING_KEY: gh-aw-${{ github.repository }}
+          DEFAULT_PROMPT_FILE: .github/workflows/shared/prompts/pydantic-ai-bug-hunter.md
         run: |
           set -euo pipefail
 
@@ -164,14 +176,16 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           }
 
-          # Prompt iteration via Logfire is opt-in. If the read key is not
-          # configured, fall back to the baked-in instructions below so the
-          # workflow still runs (just without live prompt overrides).
-          if [ -z "${LOGFIRE_READ_KEY:-}" ]; then
-            echo "::notice::LOGFIRE_READ_EXTERNAL_VARIABLES not set — using baked-in static prompt only."
-            emit_prompt ""
+          # The Logfire managed variable holds the COMPLETE prompt. When it is
+          # unset or unreachable, fall back to the full committed default so the
+          # agent always receives a complete prompt — never a partial one.
+          use_default() {
+            echo "::notice::$1 — using the committed default prompt (${DEFAULT_PROMPT_FILE})."
+            emit_prompt "$(cat "${DEFAULT_PROMPT_FILE}")"
             exit 0
-          fi
+          }
+
+          [ -n "${LOGFIRE_READ_KEY:-}" ] || use_default "LOGFIRE_READ_EXTERNAL_VARIABLES not set"
 
           RESPONSE="$(curl --fail --silent --show-error \
             --max-time 20 \
@@ -179,124 +193,18 @@ jobs:
             -H "Authorization: Bearer ${LOGFIRE_READ_KEY}" \
             -H "Content-Type: application/json" \
             -d "{\"context\":{\"targetingKey\":\"${TARGETING_KEY}\"}}" \
-            "${LOGFIRE_BASE_URL%/}/v1/ofrep/v1/evaluate/flags/${LOGFIRE_VARIABLE_KEY}")" || {
-              echo "::warning::Logfire OFREP request failed — using baked-in static prompt only."
-              emit_prompt ""
-              exit 0
-            }
+            "${LOGFIRE_BASE_URL%/}/v1/ofrep/v1/evaluate/flags/${LOGFIRE_VARIABLE_KEY}")" \
+            || use_default "Logfire OFREP request failed"
 
           PROMPT="$(printf '%s' "$RESPONSE" | jq -r '.value // empty')"
 
           if [ -z "$PROMPT" ]; then
             REASON="$(printf '%s' "$RESPONSE" | jq -r '.reason // "UNKNOWN"')"
-            echo "::notice::No Logfire value for ${LOGFIRE_VARIABLE_KEY} (reason: ${REASON}) — using baked-in static prompt only."
-            emit_prompt ""
-            exit 0
+            use_default "No Logfire value for ${LOGFIRE_VARIABLE_KEY} (reason: ${REASON})"
           fi
 
           emit_prompt "$PROMPT"
-          echo "Loaded dynamic prompt (${#PROMPT} chars) from Logfire variable '${LOGFIRE_VARIABLE_KEY}'."
+          echo "Loaded full prompt (${#PROMPT} chars) from Logfire variable '${LOGFIRE_VARIABLE_KEY}'."
 ---
-
-# Pydantic AI Bug Hunter
-
-You are running under the **Pydantic AI harness engine** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have native `bash`, `read_file`, `grep`, `list_dir` tools plus the
-gh-aw GitHub tools and the `create_issue` / `noop` safe-output tools.
-
-Repository: `${{ github.repository }}` — [Pydantic AI](https://ai.pydantic.dev/),
-a provider-agnostic GenAI agent framework for Python. It is a `uv` workspace:
-`pydantic_ai_slim/` (the agent framework), `pydantic_graph/`, `pydantic_evals/`,
-`clai/`, with tests in `tests/`.
-
-## Objective
-
-Find a single reproducible, user-impacting bug that can be covered by a minimal
-failing test. Not a number field accepting `"ABC"` — a real, impactful bug.
-
-**The bar is high: you must actually reproduce the bug before filing.** Most
-runs should end with `noop` — that means the codebase is healthy. Filing a
-weak or speculative issue is worse than filing nothing.
-
-### Data Gathering
-
-1. Review recent changes: run `git log --since="28 days ago" --stat` and
-   identify candidates with user-facing impact. Read the diffs and related
-   files for each candidate.
-2. Investigate from multiple angles — different subsystems (model providers,
-   the agent loop, tools, output handling, message history), different bug
-   categories (logic errors, type-safety gaps, async edge cases), and
-   different recent commits.
-3. Reproduce locally — **mandatory, not optional**:
-   - Write a **new** minimal reproduction: a small script or test that directly
-     triggers the specific bug you identified. Do **not** run the existing
-     suite (`make test`, `pytest`) and report its failures — if you did not
-     write the test, a failure is not your finding.
-   - Capture the exact steps and output from your reproduction.
-   - If you cannot write a concrete reproduction that fails due to the bug, do
-     **not** file it. Call `noop` instead.
-
-### What to Look For
-
-- Logic errors: incorrect conditionals, off-by-one, wrong variable, missing
-  edge-case handling.
-- Clear user impact: wrong output, raised/swallowed exception, broken agent
-  run, incorrect tool dispatch, mis-serialized message history.
-- Deterministic reproduction (not flaky) that you trigger yourself.
-- Expressible as a minimal failing test (unit or integration).
-
-### What to Skip
-
-- Theoretical concerns without a reproduction — no "this looks like it could break."
-- Code that "looks wrong" but works correctly in practice.
-- Existing test-suite failures you did not cause.
-- Edge cases needing unusual or undocumented inputs.
-- Issues requiring large refactors or design changes.
-- Behavior already tracked by an open issue.
-- **By-design behavior.** Check for nearby comments explaining the choice,
-  consistent patterns across the codebase, and recent PRs/commits for context.
-  If the "bug" requires assuming an error despite an established pattern, it is
-  probably by-design.
-
-### Quality Gate — When to Noop
-
-Call `noop` if any of these are true:
-- You could not write a concrete reproduction that triggers the bug.
-- Your only evidence is an existing test failure you did not cause.
-- The bug is speculative — inferred from reading code, not triggered.
-- A similar issue is already open.
-- The impact is cosmetic or low-severity (e.g., a typo in a log message).
-- The bug is already fixed in a recently merged PR (search before filing).
-
-### Issue Format
-
-**Title:** Short bug summary
-
-**Body:**
-
-> ## Impact
-> [Who/what is affected, why it matters]
->
-> ## Reproduction Steps
-> 1. [Exact commands you ran, including the new test or script you wrote]
->
-> ## Expected vs Actual
-> **Expected:** ...
-> **Actual:** ... [include actual command output]
->
-> ## Failing Test
-> [The new test/script you wrote — include the full code]
->
-> ## Evidence
-> - [Commands/output captured, file references with `path:line`]
-
-## Dynamic instructions
-
-The following are loaded at run time from the Logfire managed variable
-`gh_aw_pydantic_ai_bug_hunter_prompt`, so the task can be tuned, A/B-tested, or
-rolled back from the Logfire UI without recompiling or committing this
-workflow. They **override or extend** the guidance above. If empty, the
-baked-in instructions above stand on their own.
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

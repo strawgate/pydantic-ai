@@ -46,14 +46,25 @@ Repository **variables**:
 
 ## Iterating prompts from Logfire
 
-Create these Logfire managed variables (string values), targeting key
-`gh-aw-<owner>/<repo>`:
+Each agent's prompt is **the entire content** of a Logfire managed variable
+(not a suffix appended to a baked-in prompt). Create these string variables,
+targeting key `gh-aw-<owner>/<repo>`:
 
 - `gh_aw_pydantic_ai_bug_hunter_prompt`
 - `gh_aw_pydantic_ai_docs_drift_prompt`
 
-Their content is appended to (and overrides) the static instructions in the
-workflow body — no recompile or commit needed to tune the agent.
+Seed each one with the corresponding committed default, which is the complete
+canonical prompt:
+
+- `.github/workflows/shared/prompts/pydantic-ai-bug-hunter.md`
+- `.github/workflows/shared/prompts/pydantic-ai-docs-drift.md`
+
+(Paste the file content below its leading HTML comment.) Whatever the variable
+holds **replaces** the prompt wholesale at run time — iterate freely in the
+Logfire UI, no recompile or commit needed. If the variable is unset or Logfire
+is unreachable, the workflow falls back to the committed default file so the
+agent always receives a complete prompt. Keep the default files in sync with
+the live variables as the reviewed baseline.
 
 ## Editing & recompiling
 

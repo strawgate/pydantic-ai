@@ -54,14 +54,15 @@ After editing any `.md`, recompile the lockfiles with the `gh aw` CLI:
 
 ```bash
 gh extension install githubnext/gh-aw   # or build from source
-gh aw compile --action-mode script \
+gh aw compile --action-mode dev \
   pydantic-ai-bug-hunter pydantic-ai-docs-drift pydantic-ai-pr-selftest
 ```
 
-`--action-mode script` is required: it makes the lockfiles self-contained
-(the gh-aw `actions/` bundle is checked out from upstream `github/gh-aw` at
-run time) instead of the default `dev` mode, which expects a vendored
-`./actions/setup` directory this repo does not carry. Commit the regenerated
-`*.lock.yml`. They are generated artifacts (excluded
+`--action-mode dev` must be passed explicitly (do not rely on auto-detection,
+which selects a mode that emits `./actions/setup` with no preceding checkout).
+`dev` mode prepends a "Checkout actions folder" step that sparse-checks-out
+the gh-aw `actions/` bundle from upstream `github/gh-aw` into the workspace
+(`persist-credentials: false`), so `./actions/setup` resolves without
+vendoring the 11MB bundle into this repo. Commit the regenerated `*.lock.yml`. They are generated artifacts (excluded
 from the whitespace pre-commit hooks and the `secrets-outside-env` zizmor
 audit, like `uv.lock`).

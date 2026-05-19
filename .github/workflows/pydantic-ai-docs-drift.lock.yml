@@ -107,16 +107,14 @@ jobs:
           repository: github/gh-aw
           sparse-checkout: |
             actions
-          path: /tmp/gh-aw/actions-source
-          fetch-depth: 1
           persist-credentials: false
       - name: Setup Scripts
         id: setup
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/setup.sh
+        uses: ./actions/setup
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+          job-name: ${{ github.job }}
         env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
           GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
           GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
@@ -155,6 +153,7 @@ jobs:
           sparse-checkout: |
             .github
             .agents
+            actions/setup
             .claude
             .codex
             .crush
@@ -324,13 +323,6 @@ jobs:
             /tmp/gh-aw/.claude/agents
           if-no-files-found: ignore
           retention-days: 1
-      - name: Clean Scripts
-        if: always()
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/clean.sh
-        env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
 
   agent:
     needs:
@@ -368,21 +360,19 @@ jobs:
           repository: github/gh-aw
           sparse-checkout: |
             actions
-          path: /tmp/gh-aw/actions-source
-          fetch-depth: 1
           persist-credentials: false
       - name: Setup Scripts
         id: setup
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/setup.sh
+        uses: ./actions/setup
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+          job-name: ${{ github.job }}
+          trace-id: ${{ needs.activation.outputs.setup-trace-id }}
+          parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
           GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
           GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
-          INPUT_TRACE_ID: ${{ needs.activation.outputs.setup-trace-id }}
-          INPUT_PARENT_SPAN_ID: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
       - name: Set runtime paths
         id: set-runtime-paths
         run: |
@@ -1018,13 +1008,6 @@ jobs:
             /tmp/gh-aw/sandbox/firewall/audit/
             /tmp/gh-aw/sandbox/firewall/awf-reflect.json
           if-no-files-found: ignore
-      - name: Clean Scripts
-        if: always()
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/clean.sh
-        env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
 
   conclusion:
     needs:
@@ -1056,21 +1039,19 @@ jobs:
           repository: github/gh-aw
           sparse-checkout: |
             actions
-          path: /tmp/gh-aw/actions-source
-          fetch-depth: 1
           persist-credentials: false
       - name: Setup Scripts
         id: setup
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/setup.sh
+        uses: ./actions/setup
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+          job-name: ${{ github.job }}
+          trace-id: ${{ needs.activation.outputs.setup-trace-id }}
+          parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
           GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
           GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
-          INPUT_TRACE_ID: ${{ needs.activation.outputs.setup-trace-id }}
-          INPUT_PARENT_SPAN_ID: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
       - name: Download agent output artifact
         id: download-agent-output
         continue-on-error: true
@@ -1178,13 +1159,6 @@ jobs:
             setupGlobals(core, github, context, exec, io, getOctokit);
             const { main } = require('${{ runner.temp }}/gh-aw/actions/handle_agent_failure.cjs');
             await main();
-      - name: Clean Scripts
-        if: always()
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/clean.sh
-        env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
 
   detection:
     needs:
@@ -1206,21 +1180,19 @@ jobs:
           repository: github/gh-aw
           sparse-checkout: |
             actions
-          path: /tmp/gh-aw/actions-source
-          fetch-depth: 1
           persist-credentials: false
       - name: Setup Scripts
         id: setup
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/setup.sh
+        uses: ./actions/setup
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+          job-name: ${{ github.job }}
+          trace-id: ${{ needs.activation.outputs.setup-trace-id }}
+          parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
           GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
           GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
-          INPUT_TRACE_ID: ${{ needs.activation.outputs.setup-trace-id }}
-          INPUT_PARENT_SPAN_ID: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
       - name: Download agent output artifact
         id: download-agent-output
         continue-on-error: true
@@ -1512,21 +1484,19 @@ jobs:
           repository: github/gh-aw
           sparse-checkout: |
             actions
-          path: /tmp/gh-aw/actions-source
-          fetch-depth: 1
           persist-credentials: false
       - name: Setup Scripts
         id: setup
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/setup.sh
+        uses: ./actions/setup
+        with:
+          destination: ${{ runner.temp }}/gh-aw/actions
+          job-name: ${{ github.job }}
+          trace-id: ${{ needs.activation.outputs.setup-trace-id }}
+          parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
           GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
           GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
-          INPUT_TRACE_ID: ${{ needs.activation.outputs.setup-trace-id }}
-          INPUT_PARENT_SPAN_ID: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
       - name: Mask OTLP telemetry headers
         run: bash "${RUNNER_TEMP}/gh-aw/actions/mask_otlp_headers.sh"
       - name: Download agent output artifact
@@ -1577,11 +1547,4 @@ jobs:
             /tmp/gh-aw/safe-output-items.jsonl
             /tmp/gh-aw/temporary-id-map.json
           if-no-files-found: ignore
-      - name: Clean Scripts
-        if: always()
-        run: |
-          bash /tmp/gh-aw/actions-source/actions/setup/clean.sh
-        env:
-          INPUT_DESTINATION: ${{ runner.temp }}/gh-aw/actions
-          INPUT_JOB_NAME: ${{ github.job }}
 

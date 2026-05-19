@@ -1,12 +1,13 @@
-"""Tests for the Pydantic AI gh-aw harness (.github/scripts/pydantic-ai-runner).
+"""Offline tests for the Pydantic AI gh-aw harness (.github/scripts/pydantic-ai-runner).
 
-Offline tests cover the gh-aw compatibility surface (argv tolerance, prompt
-recovery, model resolution, MCP-config translation, stream-json schema) and
-need no network or credentials.
+These cover the gh-aw compatibility surface with no network or credentials:
+argv tolerance, prompt recovery, model resolution, MCP-config translation and
+allow-list filtering, Claude-named native tools, `--allowed-tools` /
+`--permission-mode` enforcement, structured-error guarantees, and the
+stream-json schema.
 
-The live test is skipped unless an OpenAI-compatible endpoint is provided via
-env:  GH_AW_HARNESS_LIVE_API_KEY, GH_AW_HARNESS_LIVE_BASE_URL,
-GH_AW_HARNESS_LIVE_MODEL.  No credentials are stored in this repo.
+The single live test is skipped unless an OpenAI-compatible endpoint is given
+via env: GH_AW_HARNESS_LIVE_API_KEY / _BASE_URL / _MODEL.
 
 Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
@@ -27,9 +28,12 @@ _SCRIPT = Path(__file__).parent / "pydantic-ai-runner"
 
 def _load_harness():
     # The harness has no .py extension, so use an explicit source loader.
+    # Register in sys.modules before exec so dataclasses can resolve the
+    # module (required with `from __future__ import annotations`).
     loader = importlib.machinery.SourceFileLoader("par_harness", str(_SCRIPT))
     spec = importlib.util.spec_from_loader("par_harness", loader)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
     loader.exec_module(mod)
     return mod
 
@@ -37,13 +41,12 @@ def _load_harness():
 har = _load_harness()
 
 
-# The exact argv gh-aw's claude_harness.cjs passes, with the prompt appended
-# as the final positional argument.
+# The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
 GHAW_ARGV = [
     "--print",
     "--no-chrome",
     "--allowed-tools",
-    "Bash,Read,mcp__github__get_me,mcp__safeoutputs",
+    "Bash,Read,Edit(/tmp/*),mcp__github__get_me,mcp__safeoutputs",
     "--debug-file",
     "/tmp/gh-aw/agent-stdio.log",
     "--verbose",
@@ -58,16 +61,18 @@ GHAW_ARGV = [
 ]
 
 
+# --------------------------------------------------------------------------- #
+# argv / prompt
+# --------------------------------------------------------------------------- #
 def test_parses_full_claude_argv_without_error():
     args = har.parse_args([*GHAW_ARGV, "do the thing"])
     assert args.mcp_config == "/tmp/mcp-servers.json"
     assert args.prompt_file == "/tmp/gh-aw/aw-prompts/prompt.txt"
     assert args.prompt_positional == "do the thing"
+    assert args.permission_mode == "bypassPermissions"
 
 
 def test_unknown_future_claude_flags_are_tolerated():
-    # gh-aw / Claude may add flags later; the harness must not crash, and the
-    # trailing prompt positional is still recovered.
     args = har.parse_args([*GHAW_ARGV, "--some-future-flag", "x", "prompt"])
     assert args.prompt_positional == "prompt"
 
@@ -88,10 +93,214 @@ def test_prompt_falls_back_to_env(tmp_path, monkeypatch):
     pf = tmp_path / "p.txt"
     pf.write_text("from env path", encoding="utf-8")
     monkeypatch.setenv("GH_AW_PROMPT", str(pf))
-    args = har.parse_args(["--print"])
-    assert har.resolve_prompt(args) == "from env path"
+    assert har.resolve_prompt(har.parse_args(["--print"])) == "from env path"
 
 
+# --------------------------------------------------------------------------- #
+# --allowed-tools parsing & enforcement
+# --------------------------------------------------------------------------- #
+def test_allowed_tools_absent_is_none():
+    assert har.parse_args(["--print"]).allowed_tools is None
+    assert har._split_allowed_tools(None) is None
+
+
+def test_allowed_tools_parsed_and_scope_stripped():
+    args = har.parse_args([*GHAW_ARGV, "p"])
+    assert args.allowed_tools == frozenset(
+        {"Bash", "Read", "Edit", "mcp__github__get_me", "mcp__safeoutputs"}
+    )
+
+
+def test_select_native_tools_no_allowlist_keeps_all():
+    tools = har.select_native_tools(None, None)
+    assert [t.name for t in tools] == list(har.NATIVE_TOOL_NAMES)
+
+
+def test_select_native_tools_enforces_allowlist():
+    tools = har.select_native_tools(frozenset({"Bash", "Read", "mcp__safeoutputs"}), None)
+    assert [t.name for t in tools] == ["Bash", "Read"]
+
+
+def test_plan_mode_withholds_mutating_tools():
+    tools = har.select_native_tools(None, "plan")
+    names = {t.name for t in tools}
+    assert names.isdisjoint(har.MUTATING_TOOLS)
+    assert "Read" in names and "Grep" in names and "Glob" in names
+
+
+def test_plan_mode_and_allowlist_compose():
+    tools = har.select_native_tools(frozenset({"Bash", "Read"}), "plan")
+    assert [t.name for t in tools] == ["Read"]  # Bash dropped by plan mode
+
+
+def test_native_tools_registry_uses_claude_names():
+    assert tuple(har.NATIVE_TOOLS) == har.NATIVE_TOOL_NAMES
+    assert har.NATIVE_TOOL_NAMES == (
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Grep",
+        "Glob",
+        "LS",
+        "WebFetch",
+        "TodoWrite",
+        "ExitPlanMode",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# native tool behavior
+# --------------------------------------------------------------------------- #
+def test_native_file_tools_roundtrip(tmp_path):
+    f = tmp_path / "sub" / "note.txt"
+    assert "wrote" in har.write_file(str(f), "hello\nworld\n")
+    assert har.read_file(str(f)) == "hello\nworld\n"
+    assert "edited" in har.edit_file(str(f), "world", "there")
+    assert "there" in har.read_file(str(f))
+    assert "note.txt" in har.list_dir(str(tmp_path / "sub"))
+    assert har.edit_file(str(f), "absent", "x") == "error: `old_string` not found"
+
+
+def test_read_file_offset_and_limit(tmp_path):
+    f = tmp_path / "n.txt"
+    f.write_text("l1\nl2\nl3\nl4\n", encoding="utf-8")
+    assert har.read_file(str(f), offset=2, limit=2) == "l2\nl3"
+
+
+def test_edit_file_replace_all(tmp_path):
+    f = tmp_path / "r.txt"
+    f.write_text("a a a", encoding="utf-8")
+    har.edit_file(str(f), "a", "b", replace_all=True)
+    assert f.read_text(encoding="utf-8") == "b b b"
+
+
+def test_native_bash_tool():
+    out = har.bash("echo hello-from-bash")
+    assert "exit=0" in out and "hello-from-bash" in out
+
+
+def test_native_grep_tool(tmp_path):
+    (tmp_path / "a.txt").write_text("alpha\nNEEDLE here\n", encoding="utf-8")
+    assert "NEEDLE here" in har.grep("NEEDLE", str(tmp_path))
+
+
+def test_native_glob_tool(tmp_path):
+    (tmp_path / "x").mkdir()
+    (tmp_path / "x" / "a.py").write_text("", encoding="utf-8")
+    (tmp_path / "x" / "b.txt").write_text("", encoding="utf-8")
+    res = har.glob_search("**/*.py", str(tmp_path))
+    assert "x/a.py" in res and "b.txt" not in res
+
+
+def test_glob_outside_base_is_handled(tmp_path):
+    # An absolute pattern resolves outside `base`; must not raise (ValueError
+    # from relative_to is caught and reported).
+    out = har.glob_search("/etc/*", str(tmp_path))
+    assert out.startswith("error:") or out == "(no matches)"
+
+
+def test_multi_edit_atomic(tmp_path):
+    f = tmp_path / "m.txt"
+    f.write_text("one two three", encoding="utf-8")
+    ok = har.multi_edit(str(f), [{"old_string": "one", "new_string": "1"},
+                                 {"old_string": "three", "new_string": "3"}])
+    assert "applied 2 edit(s)" in ok
+    assert f.read_text(encoding="utf-8") == "1 two 3"
+    # A failing edit writes nothing (atomic).
+    res = har.multi_edit(str(f), [{"old_string": "1", "new_string": "X"},
+                                  {"old_string": "absent", "new_string": "Y"}])
+    assert "edit #2" in res and "not found" in res
+    assert f.read_text(encoding="utf-8") == "1 two 3"
+
+
+def test_multi_edit_replace_all(tmp_path):
+    f = tmp_path / "r.txt"
+    f.write_text("a a a", encoding="utf-8")
+    har.multi_edit(str(f), [{"old_string": "a", "new_string": "b", "replace_all": True}])
+    assert f.read_text(encoding="utf-8") == "b b b"
+
+
+def test_page_to_text_strips_html():
+    assert har._page_to_text("<html><body>Hi <b>there</b><script>x()</script></body></html>") == "Hi there"
+
+
+def test_fetch_page_rejects_non_http():
+    assert har._fetch_page("ftp://x/y").startswith("error:")
+    assert har._fetch_page("file:///etc/passwd").startswith("error:")
+
+
+def test_fetch_page_success_and_network_error(monkeypatch):
+    monkeypatch.setattr(har, "_http_get", lambda url, timeout=20.0: (200, "<p>Hello</p>"))
+    out = har._fetch_page("https://example.test")
+    assert out.startswith("HTTP 200 for https://example.test") and "Hello" in out
+
+    def boom(url, timeout=20.0):
+        raise RuntimeError("blocked by firewall")
+
+    monkeypatch.setattr(har, "_http_get", boom)
+    assert har._fetch_page("https://blocked.test") == "error: fetch failed: blocked by firewall"
+
+
+def test_web_fetch_summarizes_via_run_model(monkeypatch):
+    # Faithful WebFetch: fetch then answer the prompt with the run's model.
+    # Drive it with a stub ctx exposing .model (a TestModel) — offline.
+    import asyncio
+
+    from pydantic_ai.models.test import TestModel
+
+    monkeypatch.setattr(
+        har, "_http_get", lambda url, timeout=20.0: (200, "<html>The sky is blue.</html>")
+    )
+
+    class _Ctx:
+        model = TestModel(custom_output_text="SUMMARY: sky is blue")
+
+    out = asyncio.run(har.web_fetch(_Ctx(), "https://example.test", "what colour is the sky?"))
+    assert out == "SUMMARY: sky is blue"
+    # A fetch error short-circuits before the model is consulted.
+    monkeypatch.setattr(har, "_http_get", lambda url, timeout=20.0: (_ for _ in ()).throw(RuntimeError("nope")))
+    err = asyncio.run(har.web_fetch(_Ctx(), "https://blocked.test", "x"))
+    assert err == "error: fetch failed: nope"
+
+
+def test_todo_write_acknowledges():
+    out = har.todo_write(
+        [{"content": "do x", "status": "in_progress", "activeForm": "doing x"}]
+    )
+    assert "do x" in out and out.startswith("todo list")
+    assert har.todo_write([]) == "todo list cleared"
+
+
+def test_exit_plan_mode_returns_ack():
+    assert "proceeding" in har.exit_plan_mode("step 1; step 2").lower()
+
+
+def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
+    names = {t.name for t in har.select_native_tools(None, "plan")}
+    assert "MultiEdit" not in names  # mutating
+    assert {"WebFetch", "TodoWrite", "ExitPlanMode"} <= names  # non-mutating
+
+
+def test_request_limit_default_and_override(monkeypatch):
+    monkeypatch.delenv("GH_AW_HARNESS_REQUEST_LIMIT", raising=False)
+    assert har._request_limit() == har.DEFAULT_REQUEST_LIMIT == 100
+    monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", "250")
+    assert har._request_limit() == 250
+    for bad in ("0", "-5", "abc", ""):
+        monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", bad)
+        assert har._request_limit() == 100
+
+
+def test_instructions_encourage_parallel_tool_calls():
+    assert har.INSTRUCTIONS.strip()
+    assert "parallel" in har.INSTRUCTIONS.lower()
+
+
+# --------------------------------------------------------------------------- #
+# model resolution (proxy semantics — unchanged)
+# --------------------------------------------------------------------------- #
 def test_model_defaults_to_anthropic(monkeypatch):
     for v in (
         "GH_AW_HARNESS_MODEL",
@@ -101,8 +310,7 @@ def test_model_defaults_to_anthropic(monkeypatch):
         "ANTHROPIC_BASE_URL",
     ):
         monkeypatch.delenv(v, raising=False)
-    args = har.parse_args(["--print"])
-    model, label = har.build_model(args)
+    model, label = har.build_model(har.parse_args(["--print"]))
     assert label == "anthropic:claude-sonnet-4-5"
     assert model.__class__.__name__ == "AnthropicModel"
 
@@ -110,43 +318,47 @@ def test_model_defaults_to_anthropic(monkeypatch):
 def test_model_openai_prefix_builds_openai_model(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    args = har.parse_args(["--model", "openai:gpt-4o-mini"])
-    model, label = har.build_model(args)
+    model, label = har.build_model(har.parse_args(["--model", "openai:gpt-4o-mini"]))
     assert label == "openai-compatible:gpt-4o-mini"
     assert model.__class__.__name__ == "OpenAIChatModel"
 
 
-def test_openai_base_url_triggers_openai_compatible(monkeypatch):
-    # An OpenAI-compatible endpoint (vLLM/Together/etc.) with a bare model id.
-    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("GH_AW_HARNESS_MODEL", "some/model")
-    args = har.parse_args(["--print"])
-    model, label = har.build_model(args)
-    assert label == "openai-compatible:some/model"
-    assert model.__class__.__name__ == "OpenAIChatModel"
-
-
 def test_anthropic_base_url_builds_anthropic_model(monkeypatch):
-    # Under the gh-aw claude engine the custom endpoint arrives as
-    # ANTHROPIC_BASE_URL and the key is proxy-injected (no *_API_KEY in env).
     for v in ("OPENAI_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GH_AW_HARNESS_API_KEY"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.minimax.io/anthropic")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder")
     monkeypatch.setenv("GH_AW_HARNESS_MODEL", "MiniMax-M2.7-highspeed")
-    args = har.parse_args(["--print"])
-    model, label = har.build_model(args)
+    model, label = har.build_model(har.parse_args(["--print"]))
     assert label == "anthropic:MiniMax-M2.7-highspeed"
     assert model.__class__.__name__ == "AnthropicModel"
 
 
+def test_first_env_precedence(monkeypatch):
+    for v in ("A", "B", "C"):
+        monkeypatch.delenv(v, raising=False)
+    assert har._first_env("A", "B", "C") is None
+    monkeypatch.setenv("B", "vb")
+    monkeypatch.setenv("C", "vc")
+    assert har._first_env("A", "B", "C") == "vb"
+
+
+def test_use_openai_provider_selection():
+    assert har._use_openai_provider("openai", None, None) is True
+    assert har._use_openai_provider("anthropic", "http://x", None) is False
+    assert har._use_openai_provider("", "http://x", None) is True
+    assert har._use_openai_provider("", None, "http://proxy") is False
+    assert har._use_openai_provider("", None, None) is False
+
+
+# --------------------------------------------------------------------------- #
+# MCP translation & allow-list filtering
+# --------------------------------------------------------------------------- #
 def test_mcp_missing_config_degrades_gracefully():
     assert har.build_mcp_servers(har.Args(mcp_config="/no/such/file.json")) == []
 
 
-def test_mcp_translates_stdio_and_http(tmp_path):
+def _mcp_cfg(tmp_path):
     cfg = tmp_path / "mcp.json"
     cfg.write_text(
         json.dumps(
@@ -163,38 +375,42 @@ def test_mcp_translates_stdio_and_http(tmp_path):
         ),
         encoding="utf-8",
     )
-    servers = har.build_mcp_servers(har.Args(mcp_config=str(cfg)))
+    return cfg
+
+
+def test_mcp_translates_stdio_and_http_unfiltered(tmp_path):
+    servers = har.build_mcp_servers(har.Args(mcp_config=str(_mcp_cfg(tmp_path))))
     assert len(servers) == 2
-    # Both stdio and http now use the non-deprecated MCPToolset (no prefix).
     assert {s.__class__.__name__ for s in servers} == {"MCPToolset"}
 
 
-def test_native_tools_registered():
-    names = [t.__name__ for t in har.NATIVE_TOOLS]
-    assert names == ["bash", "read_file", "write_file", "edit_file", "list_dir", "grep"]
+def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path):
+    servers = har.build_mcp_servers(
+        har.Args(mcp_config=str(_mcp_cfg(tmp_path)), allowed_tools=frozenset({"mcp__safeoutputs"}))
+    )
+    assert len(servers) == 2
+    assert {s.__class__.__name__ for s in servers} == {"FilteredToolset"}
 
 
-def test_native_file_tools_roundtrip(tmp_path):
-    f = tmp_path / "sub" / "note.txt"
-    assert "wrote" in har.write_file(str(f), "hello\nworld\n")
-    assert har.read_file(str(f)) == "hello\nworld\n"
-    assert "edited" in har.edit_file(str(f), "world", "there")
-    assert "there" in har.read_file(str(f))
-    assert "note.txt" in har.list_dir(str(tmp_path / "sub"))
-    assert "error: `old` text not found" == har.edit_file(str(f), "absent", "x")
+def test_mcp_allow_predicate_server_wildcard_vs_specific():
+    class _TD:  # minimal stand-in for ToolDefinition (predicate only reads .name)
+        def __init__(self, name):
+            self.name = name
+
+    # whole-server allow
+    pred = har._mcp_tool_allowed("safeoutputs", frozenset({"mcp__safeoutputs"}))
+    assert pred(None, _TD("add_comment")) is True
+    assert pred(None, _TD("create_issue")) is True
+
+    # specific-tool allow only
+    pred = har._mcp_tool_allowed("github", frozenset({"mcp__github__get_me"}))
+    assert pred(None, _TD("get_me")) is True
+    assert pred(None, _TD("delete_repo")) is False
 
 
-def test_native_bash_tool(tmp_path):
-    out = har.bash("echo hello-from-bash")
-    assert "exit=0" in out and "hello-from-bash" in out
-
-
-def test_native_grep_tool(tmp_path):
-    (tmp_path / "a.txt").write_text("alpha\nNEEDLE here\n", encoding="utf-8")
-    res = har.grep("NEEDLE", str(tmp_path))
-    assert "NEEDLE here" in res
-
-
+# --------------------------------------------------------------------------- #
+# stream-json schema & structured-error guarantee
+# --------------------------------------------------------------------------- #
 def test_emit_result_matches_claude_stream_json_schema():
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -213,27 +429,7 @@ def test_emit_result_passes_through_turns_and_duration():
     with redirect_stdout(buf):
         har.emit_result("x", usage=None, session_id="s", num_turns=3, duration_ms=1234)
     obj = json.loads(buf.getvalue().strip())
-    assert obj["num_turns"] == 3
-    assert obj["duration_ms"] == 1234
-
-
-def test_first_env_precedence(monkeypatch):
-    for v in ("A", "B", "C"):
-        monkeypatch.delenv(v, raising=False)
-    assert har._first_env("A", "B", "C") is None
-    monkeypatch.setenv("B", "vb")
-    monkeypatch.setenv("C", "vc")
-    assert har._first_env("A", "B", "C") == "vb"
-
-
-def test_use_openai_provider_selection():
-    # explicit prefixes win
-    assert har._use_openai_provider("openai", None, None) is True
-    assert har._use_openai_provider("anthropic", "http://x", None) is False
-    # no prefix: only OPENAI_BASE_URL set -> openai; gh-aw (anthropic set) -> anthropic
-    assert har._use_openai_provider("", "http://x", None) is True
-    assert har._use_openai_provider("", None, "http://proxy") is False
-    assert har._use_openai_provider("", None, None) is False
+    assert obj["num_turns"] == 3 and obj["duration_ms"] == 1234
 
 
 def test_emit_result_error_subtype():
@@ -241,8 +437,7 @@ def test_emit_result_error_subtype():
     with redirect_stdout(buf):
         har.emit_result("boom", usage=None, session_id="run-1", is_error=True)
     obj = json.loads(buf.getvalue().strip())
-    assert obj["subtype"] == "error"
-    assert obj["is_error"] is True
+    assert obj["subtype"] == "error" and obj["is_error"] is True
 
 
 def test_emit_result_reads_usage_attributes():
@@ -254,8 +449,36 @@ def test_emit_result_reads_usage_attributes():
     with redirect_stdout(buf):
         har.emit_result("x", usage=U(), session_id="s")
     usage = json.loads(buf.getvalue().strip())["usage"]
-    assert usage["input_tokens"] == 22
-    assert usage["output_tokens"] == 292
+    assert usage["input_tokens"] == 22 and usage["output_tokens"] == 292
+
+
+def test_main_emits_structured_error_on_empty_prompt(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["pydantic-ai-runner", "--print"])
+    monkeypatch.delenv("GH_AW_PROMPT", raising=False)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = har.main()
+    assert rc == 1
+    obj = json.loads(buf.getvalue().strip())
+    assert obj["type"] == "result" and obj["is_error"] is True
+
+
+def test_main_emits_structured_error_on_startup_failure(monkeypatch):
+    # A failure *before* the agent loop (e.g. model build) must still produce a
+    # parseable stream-json result, never an opaque "no entries" run.
+    def boom(_args):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(har, "build_model", boom)
+    monkeypatch.setattr(sys, "argv", ["pydantic-ai-runner", "--print", "hello"])
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = har.main()
+    assert rc == 1
+    obj = json.loads(buf.getvalue().strip())
+    assert obj["is_error"] is True
+    assert "harness startup failed" in obj["result"]
+    assert "kaboom" in obj["result"]
 
 
 @pytest.mark.skipif(
@@ -271,11 +494,9 @@ def test_live_openai_compatible_endpoint(monkeypatch):
         os.environ.get("GH_AW_HARNESS_LIVE_BASE_URL", "https://example.test/v1"),
     )
     model = os.environ.get("GH_AW_HARNESS_LIVE_MODEL", "gpt-4o-mini")
-    # Exercise the model path without the MCP gateway (not available outside a
-    # gh-aw run): drop the --mcp-config <path> pair from the gh-aw argv.
     argv = list(GHAW_ARGV)
     i = argv.index("--mcp-config")
-    del argv[i : i + 2]
+    del argv[i : i + 2]  # no MCP gateway outside a gh-aw run
     argv += ["--model", f"openai:{model}", "Reply with exactly: HARNESS_OK"]
     monkeypatch.setattr(sys, "argv", ["pydantic-ai-runner", *argv])
     buf = io.StringIO()

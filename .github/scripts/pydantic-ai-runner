@@ -8,22 +8,29 @@
 # ///
 """Pydantic AI harness — a drop-in replacement for the Claude Code CLI in gh-aw.
 
-gh-aw invokes the agent engine as:
+gh-aw runs the agent engine like the Claude Code CLI:
 
-    node claude_harness.cjs <command> --print --no-chrome \\
-      --allowed-tools '<csv>' --debug-file <path> --verbose \\
-      --permission-mode bypassPermissions --output-format stream-json \\
+    <command> --print --no-chrome --allowed-tools '<csv>' --debug-file <path> \\
+      --verbose --permission-mode <mode> --output-format stream-json \\
       --mcp-config <mcp-servers.json> --prompt-file <prompt.txt> \\
-      [--model <model>] "<PROMPT TEXT appended by the harness>"
+      [--model <model>] "<rendered prompt>"
 
-With `engine.command` set, `<command>` is this script. It tolerates Claude
-Code's argv, recovers the prompt, bridges gh-aw's MCP servers (GitHub tools +
-the `safeoutputs` write-sink) into pydantic-ai, runs the model, and emits
-Claude-compatible stream-json so gh-aw's log parser and token accounting work.
+With `engine.command` set, `<command>` is this script. It speaks Claude
+Code's argv, recovers the prompt, builds a `pydantic-ai` agent backed by the
+gh-aw-injected Anthropic/OpenAI-compatible proxy, exposes Claude-named native
+tools plus gh-aw's MCP servers (GitHub + the `safeoutputs` write-sink),
+enforces gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
+`stream-json` so gh-aw's log parser and token accounting keep working.
+
+Credentials note: under gh-aw the real API key is *excluded* from the agent
+container (`awf --exclude-env ANTHROPIC_API_KEY`). The AWF api-proxy injects
+it transparently; the harness only ever sends a placeholder token to the
+proxy base URL — never a real upstream key.
 """
 
 import argparse
 import asyncio
+import glob as globlib
 import json
 import os
 import pathlib
@@ -33,12 +40,17 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+# pydantic requires typing_extensions.TypedDict (not typing.TypedDict) for
+# schema generation on Python < 3.12; typing_extensions ships with pydantic.
+from typing_extensions import NotRequired, TypedDict
+
 import logfire
 from anthropic import AsyncAnthropic
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
@@ -46,8 +58,62 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.usage import UsageLimits
 
 PROXY_PLACEHOLDER = "gh-aw-proxy-injected"
+
+# Default cap on model requests per run. The Claude Code CLI the harness
+# replaces has no such cap; pydantic-ai's built-in default is only 50, which
+# these deep multi-step agents exhaust mid-task. gh-aw's api-proxy still
+# enforces the real backstop (maxRuns/token budget). Override per workflow
+# with GH_AW_HARNESS_REQUEST_LIMIT.
+DEFAULT_REQUEST_LIMIT = 100
+
+# System-level execution guidance (not task content — the task prompt is the
+# user message / Logfire-managed variable). pydantic-ai runs the tool calls in
+# a single model response concurrently, so batching independent calls is both
+# faster and far cheaper in model requests.
+INSTRUCTIONS = (
+    "You can call multiple tools in a single turn. When tool calls are "
+    "independent (no call needs another call's output), issue them together "
+    "in one turn so they run in parallel — this is faster and uses far fewer "
+    "model requests. Only chain tools sequentially when one genuinely needs a "
+    "previous tool's result."
+)
+
+
+def _request_limit() -> int:
+    """Per-run model-request cap (GH_AW_HARNESS_REQUEST_LIMIT, else default)."""
+    raw = os.environ.get("GH_AW_HARNESS_REQUEST_LIMIT")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return DEFAULT_REQUEST_LIMIT
+
+# Claude Code native tools the harness implements. The model is trained on
+# these exact names/parameters, so matching them (rather than a custom set +
+# a fragile rename map) makes the harness a faithful drop-in.
+NATIVE_TOOL_NAMES = (
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Grep",
+    "Glob",
+    "LS",
+    "WebFetch",
+    "TodoWrite",
+    "ExitPlanMode",
+)
+# Tools that mutate the workspace — withheld in `plan` permission mode.
+MUTATING_TOOLS = frozenset({"Bash", "Write", "Edit", "MultiEdit"})
 
 
 def log(msg: str) -> None:
@@ -57,15 +123,39 @@ def log(msg: str) -> None:
 
 @dataclass(slots=True)
 class Args:
+    """The subset of Claude Code's CLI surface the harness acts on."""
+
     model: str | None = None
     mcp_config: str | None = None
     prompt_file: str | None = None
     prompt_positional: str | None = None
+    # None = flag absent (local/dev: no restriction). A set = enforce it.
+    allowed_tools: frozenset[str] | None = None
+    permission_mode: str | None = None
 
 
-def parse_args(argv: list[str]) -> Args:
-    """Accept Claude Code's CLI surface; keep only what we use, tolerate the rest
-    (so future Claude flags never break the engine)."""
+def _split_allowed_tools(value: str | None) -> frozenset[str] | None:
+    """Parse Claude's `--allowed-tools` CSV into base tool names.
+
+    Entries may carry a permission scope, e.g. `Edit(/tmp/*)` or
+    `Bash(git:*)` — only the base name gates availability here, so the
+    parenthesised scope is stripped. Returns `None` when the flag is absent
+    so non-gh-aw/local runs keep every tool.
+    """
+    if value is None:
+        return None
+    names: set[str] = set()
+    for raw in value.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        names.add(entry.split("(", 1)[0].strip())
+    return frozenset(names)
+
+
+def parse_args(argv: Sequence[str]) -> Args:
+    """Accept Claude Code's CLI surface; keep what we use, tolerate the rest
+    so a future Claude flag never breaks the engine."""
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--model")
     p.add_argument("--mcp-config")
@@ -76,7 +166,7 @@ def parse_args(argv: list[str]) -> Args:
     p.add_argument("--debug-file")
     for flag in ("--print", "--no-chrome", "--verbose", "--continue"):
         p.add_argument(flag, action="store_true")
-    known, unknown = p.parse_known_args(argv)
+    known, unknown = p.parse_known_args(list(argv))
     # gh-aw appends the rendered prompt as the trailing positional argument.
     positionals = [a for a in unknown if not a.startswith("-")]
     return Args(
@@ -84,6 +174,8 @@ def parse_args(argv: list[str]) -> Args:
         mcp_config=known.mcp_config,
         prompt_file=known.prompt_file,
         prompt_positional=positionals[-1] if positionals else None,
+        allowed_tools=_split_allowed_tools(known.allowed_tools),
+        permission_mode=known.permission_mode,
     )
 
 
@@ -93,8 +185,7 @@ def resolve_prompt(args: Args) -> str:
         return args.prompt_positional
     path = args.prompt_file or os.environ.get("GH_AW_PROMPT")
     if path and os.path.isfile(path):
-        with open(path, encoding="utf-8") as fh:
-            return fh.read()
+        return pathlib.Path(path).read_text(encoding="utf-8")
     return ""
 
 
@@ -108,7 +199,7 @@ def _first_env(*names: str) -> str | None:
 
 
 def _use_openai_provider(provider: str, openai_base: str | None, anthropic_base: str | None) -> bool:
-    """Select the OpenAI-compatible path for an explicit ``openai:`` model
+    """Select the OpenAI-compatible path for an explicit `openai:` model
     prefix, or when only OPENAI_BASE_URL is configured (local / non-gh-aw use).
     Under gh-aw, ANTHROPIC_BASE_URL is set, so the Anthropic path is used."""
     if provider == "openai":
@@ -119,15 +210,17 @@ def _use_openai_provider(provider: str, openai_base: str | None, anthropic_base:
 
 
 def build_model(args: Args) -> tuple[Model, str]:
-    """Build the pydantic-ai model and a human-readable label.
+    """Build the `pydantic-ai` model and a human-readable label.
 
-    Under gh-aw the harness behaves like the stock Claude Code CLI: gh-aw sets
-    ANTHROPIC_BASE_URL (its in-cluster transparent proxy) and
-    ANTHROPIC_AUTH_TOKEN (a placeholder the proxy swaps for the real key), and
-    performs credential injection / base-path rewrite in the firewall. So we
-    speak the Anthropic protocol with a Bearer auth token, exactly like the
-    CLI. pydantic-ai's default ``AnthropicProvider`` requires ANTHROPIC_API_KEY
-    and ignores ANTHROPIC_AUTH_TOKEN, so the client is constructed explicitly.
+    The harness behaves like the stock Claude Code CLI: gh-aw sets
+    `ANTHROPIC_BASE_URL` (its in-cluster transparent proxy) and a placeholder
+    auth token; the firewall's api-proxy swaps in the real key and rewrites the
+    base path. `pydantic-ai`'s default `AnthropicProvider` requires
+    `ANTHROPIC_API_KEY` and ignores `ANTHROPIC_AUTH_TOKEN`, so the Anthropic
+    client is constructed explicitly with a bearer token, exactly like the CLI.
+    Provider selection is intentionally *not* delegated to
+    `infer_model()`: the proxy is the provider abstraction and the firewall
+    only allowlists the proxy host, so the harness must stay a proxy client.
     """
     raw = (
         args.model
@@ -180,58 +273,75 @@ def configure_observability() -> None:
         log(f"observability disabled: {exc!r}")
 
 
-def build_mcp_servers(args: Args) -> list[Any]:
-    """gh-aw renders a Claude-format mcp-servers.json pointing at its MCP
-    gateway. Translate stdio/http entries into pydantic-ai MCP toolsets.
-    `container:`-type servers (e.g. the GitHub server) are launched by gh-aw's
-    gateway and reached over its http endpoint, so only stdio/http entries are
-    instantiated here."""
+# --------------------------------------------------------------------------- #
+# MCP bridge
+# --------------------------------------------------------------------------- #
+def _mcp_tool_allowed(server: str, allowed: frozenset[str]) -> Callable[[RunContext[Any], ToolDefinition], bool]:
+    """Build a `MCPToolset.filtered` predicate enforcing gh-aw's allow-list.
+
+    gh-aw lists MCP tools as `mcp__<server>` (whole server) or
+    `mcp__<server>__<tool>` (one tool). The harness does not prefix tool
+    names, so the model sees a server tool by its canonical name; map it back
+    to the gh-aw identifier here.
+    """
+    server_wildcard = f"mcp__{server}" in allowed
+
+    def predicate(_ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+        return server_wildcard or f"mcp__{server}__{tool_def.name}" in allowed
+
+    return predicate
+
+
+def build_mcp_servers(args: Args) -> list[AbstractToolset[Any]]:
+    """Translate gh-aw's Claude-format `mcp-servers.json` into `pydantic-ai`
+    toolsets.
+
+    `container:`-type servers (e.g. the GitHub server) are launched by
+    gh-aw's gateway and reached over its http endpoint, so only stdio/http
+    entries are instantiated here. Tools are **not** prefixed: gh-aw's
+    safe-output instructions reference canonical names (e.g. `add_comment`);
+    a `PrefixedToolset` would rename them and cause intermittent posting.
+    When `--allowed-tools` is set, each server is wrapped in a filter so the
+    model only sees gh-aw-permitted tools.
+    """
     path = args.mcp_config or os.environ.get("GH_AW_MCP_CONFIG")
     if not path or not os.path.isfile(path):
         log("no MCP config present — running without external tools")
         return []
-    with open(path, encoding="utf-8") as fh:
-        cfg = json.load(fh)
+    cfg: dict[str, Any] = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
 
-    servers: list[Any] = []
-    for name, spec in (cfg.get("mcpServers") or {}).items():
-        # No prefix: gh-aw injects safe-output instructions that reference the
-        # canonical MCP tool names (e.g. `add_comment`). A PrefixedToolset would
-        # rename them to `<server>_add_comment`, which the model then calls only
-        # sometimes — the cause of intermittent comment posting. So construct
-        # `MCPToolset`s directly (no `.prefixed()` / `load_mcp_toolsets`, which
-        # would re-introduce the prefix). The only real MCP server here is
-        # `safeoutputs` (GitHub is gateway-launched and skipped below), so there
-        # is no name-collision reason to prefix anyway.
+    servers: list[AbstractToolset[Any]] = []
+    servers_cfg: dict[str, Any] = cfg.get("mcpServers") or {}
+    for name, spec in servers_cfg.items():
+        toolset: AbstractToolset[Any]
         if spec.get("type") in ("http", "sse") or spec.get("url"):
-            servers.append(
-                MCPToolset(spec["url"], headers=spec.get("headers") or None)
-            )
+            toolset = MCPToolset(spec["url"], headers=spec.get("headers") or None)
         elif spec.get("command"):
             from fastmcp.client.transports import StdioTransport
 
-            servers.append(
-                MCPToolset(
-                    StdioTransport(
-                        command=spec["command"],
-                        args=spec.get("args", []),
-                        env={**os.environ, **(spec.get("env") or {})},
-                    )
+            toolset = MCPToolset(
+                StdioTransport(
+                    command=spec["command"],
+                    args=spec.get("args", []),
+                    env={**os.environ, **(spec.get("env") or {})},
                 )
             )
         else:
-            log(f"skipping MCP server '{name}' (gateway-launched container)")
+            log(f"skipping MCP server {name!r} (gateway-launched container)")
             continue
-        log(f"registered MCP server '{name}'")
+
+        if args.allowed_tools is not None:
+            toolset = toolset.filtered(_mcp_tool_allowed(name, args.allowed_tools))
+            log(f"registered MCP server {name!r} (allow-list filtered)")
+        else:
+            log(f"registered MCP server {name!r} (no allow-list)")
+        servers.append(toolset)
     return servers
 
 
 # --------------------------------------------------------------------------- #
-# Native agent tools. pydantic-ai-harness does not yet ship filesystem/shell
-# tools (only CodeMode), and the Claude-CLI Bash/Read/Edit tools are not gh-aw
-# MCP tools — so the harness provides a small idiomatic toolset. pydantic-ai
-# drives the multi-step tool loop automatically. Everything is workspace-scoped
-# and runs inside the AWF firewall sandbox.
+# Native tools — Claude Code names & parameter names, workspace-scoped, run
+# inside the AWF firewall sandbox. `pydantic-ai` drives the multi-step loop.
 # --------------------------------------------------------------------------- #
 MAX_TOOL_OUTPUT = 16000
 WORKSPACE = os.environ.get("GITHUB_WORKSPACE") or os.getcwd()
@@ -248,30 +358,43 @@ def _resolve(path: str) -> pathlib.Path:
     return p if p.is_absolute() else pathlib.Path(WORKSPACE) / p
 
 
-def bash(command: str) -> str:
-    """Run a shell command in the repository workspace and return combined
-    stdout+stderr (truncated). 120s timeout."""
+def bash(command: str, timeout: int | None = None) -> str:
+    """Run a shell command in the repository workspace.
+
+    Returns combined stdout+stderr (truncated). `timeout` is in seconds
+    (default 120, capped at 600).
+    """
+    secs = 120 if not timeout or timeout <= 0 else min(int(timeout), 600)
     try:
         r = subprocess.run(
-            command, shell=True, cwd=WORKSPACE, capture_output=True, text=True, timeout=120
+            command, shell=True, cwd=WORKSPACE, capture_output=True, text=True, timeout=secs
         )
         return _clip(f"exit={r.returncode}\n{r.stdout}{r.stderr}")
     except subprocess.TimeoutExpired:
-        return "error: command timed out after 120s"
+        return f"error: command timed out after {secs}s"
 
 
-def read_file(path: str) -> str:
-    """Read a UTF-8 text file. Relative paths resolve under the workspace."""
+def read_file(file_path: str, offset: int | None = None, limit: int | None = None) -> str:
+    """Read a UTF-8 text file. Relative paths resolve under the workspace.
+
+    Optional 1-based line `offset` and line `limit` mirror Claude's Read tool.
+    """
     try:
-        return _clip(_resolve(path).read_text(encoding="utf-8", errors="replace"))
+        text = _resolve(file_path).read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return f"error: {exc}"
+    if offset is None and limit is None:
+        return _clip(text)
+    lines = text.splitlines()
+    start = max((offset or 1) - 1, 0)
+    end = start + limit if limit else len(lines)
+    return _clip("\n".join(lines[start:end]))
 
 
-def write_file(path: str, content: str) -> str:
+def write_file(file_path: str, content: str) -> str:
     """Create or overwrite a UTF-8 text file under the workspace."""
     try:
-        p = _resolve(path)
+        p = _resolve(file_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return f"wrote {len(content)} chars to {p}"
@@ -279,36 +402,52 @@ def write_file(path: str, content: str) -> str:
         return f"error: {exc}"
 
 
-def edit_file(path: str, old: str, new: str) -> str:
-    """Replace the first exact occurrence of `old` with `new` in a workspace file."""
+def edit_file(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+    """Replace `old_string` with `new_string` in a workspace file.
+
+    Replaces the first occurrence, or every occurrence when `replace_all`.
+    """
     try:
-        p = _resolve(path)
+        p = _resolve(file_path)
         text = p.read_text(encoding="utf-8")
-        if old not in text:
-            return "error: `old` text not found"
-        p.write_text(text.replace(old, new, 1), encoding="utf-8")
+        if old_string not in text:
+            return "error: `old_string` not found"
+        edited = text.replace(old_string, new_string, -1 if replace_all else 1)
+        p.write_text(edited, encoding="utf-8")
         return f"edited {p}"
     except OSError as exc:
         return f"error: {exc}"
 
 
 def list_dir(path: str = ".") -> str:
-    """List the entries of a workspace directory (dirs marked with a trailing /)."""
+    """List a workspace directory's entries (directories marked with `/`)."""
     try:
         p = _resolve(path)
         return _clip(
-            "\n".join(
-                sorted(e.name + ("/" if e.is_dir() else "") for e in p.iterdir())
-            )
+            "\n".join(sorted(e.name + ("/" if e.is_dir() else "") for e in p.iterdir()))
             or "(empty)"
         )
     except OSError as exc:
         return f"error: {exc}"
 
 
+def glob_search(pattern: str, path: str = ".") -> str:
+    """Return workspace paths matching a glob `pattern` (supports `**`)."""
+    base = _resolve(path)
+    try:
+        matches = sorted(
+            str(pathlib.Path(m).relative_to(base))
+            for m in globlib.glob(str(base / pattern), recursive=True)
+        )
+    except (OSError, ValueError) as exc:
+        # ValueError: a match resolved outside `base` (e.g. an absolute pattern).
+        return f"error: {exc}"
+    return _clip("\n".join(matches) or "(no matches)")
+
+
 def grep(pattern: str, path: str = ".") -> str:
-    """Recursively search a regex across workspace files (ripgrep if available,
-    else a Python fallback). Returns file:line:text matches (capped)."""
+    """Recursively regex-search workspace files (ripgrep if available, else a
+    Python fallback). Returns `file:line:text` matches (capped)."""
     base = _resolve(path)
     rg = shutil.which("rg")
     if rg:
@@ -331,9 +470,7 @@ def grep(pattern: str, path: str = ".") -> str:
         if not f.is_file():
             continue
         try:
-            for i, ln in enumerate(
-                f.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
-            ):
+            for i, ln in enumerate(f.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
                 if rx.search(ln):
                     out.append(f"{f}:{i}:{ln}")
                     if len(out) >= 500:
@@ -343,9 +480,169 @@ def grep(pattern: str, path: str = ".") -> str:
     return _clip("\n".join(out) or "(no matches)")
 
 
-NATIVE_TOOLS = [bash, read_file, write_file, edit_file, list_dir, grep]
+class EditOp(TypedDict):
+    """One replacement for `MultiEdit` (Claude's edit schema)."""
+
+    old_string: str
+    new_string: str
+    replace_all: NotRequired[bool]
 
 
+class TodoItem(TypedDict):
+    """One entry for `TodoWrite` (Claude's todo schema)."""
+
+    content: str
+    status: str
+    activeForm: str
+
+
+def multi_edit(file_path: str, edits: list[EditOp]) -> str:
+    """Apply a sequence of string replacements to one workspace file atomically.
+
+    Each edit replaces the first occurrence of `old_string` (or every
+    occurrence when `replace_all`). If any `old_string` is missing, nothing is
+    written — the file is left untouched.
+    """
+    try:
+        p = _resolve(file_path)
+        text = original = p.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"error: {exc}"
+    for i, e in enumerate(edits):
+        old = e.get("old_string", "")
+        if not old or old not in text:
+            return f"error: edit #{i + 1} `old_string` not found (no changes written)"
+        text = text.replace(old, e.get("new_string", ""), -1 if e.get("replace_all") else 1)
+    if text == original:
+        return "no changes"
+    try:
+        p.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        return f"error: {exc}"
+    return f"applied {len(edits)} edit(s) to {p}"
+
+
+def _http_get(url: str, timeout: float = 20.0) -> tuple[int, str]:
+    """Single HTTP GET, isolated so tests can stub the network."""
+    import httpx
+
+    r = httpx.get(
+        url,
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": "pydantic-ai-harness"},
+    )
+    return r.status_code, r.text
+
+
+_HTML_TAG_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>|<[^>]+>")
+WEBFETCH_MAX_CONTENT = 120_000
+
+
+def _page_to_text(body: str) -> str:
+    """Reduce an HTML (or plain) response body to readable text."""
+    text = _HTML_TAG_RE.sub(" ", body)
+    return re.sub(r"[ \t]{2,}", " ", re.sub(r"\s+\n", "\n", text)).strip()
+
+
+def _fetch_page(url: str) -> str:
+    """Fetch `url`, returning its text or an `error:` string.
+
+    Model-free and network-isolated so it is unit-testable.
+    """
+    if not url.startswith(("http://", "https://")):
+        return "error: url must be http(s)"
+    try:
+        status, body = _http_get(url)
+    except Exception as exc:  # noqa: BLE001 - network/DNS/firewall/import -> tool result
+        return f"error: fetch failed: {exc}"
+    return f"HTTP {status} for {url}\n\n{_page_to_text(body)}"
+
+
+async def web_fetch(ctx: RunContext[None], url: str, prompt: str) -> str:
+    """Fetch a URL and answer `prompt` about its content (Claude's WebFetch).
+
+    Faithful to Claude Code: the page is fetched, reduced to text, then the
+    `prompt` is run against that content using the current run's model
+    (Claude's WebFetch uses a fast model; the harness reuses the run model).
+    Subject to the AWF network firewall.
+    """
+    page = _fetch_page(url)
+    if page.startswith("error:"):
+        return page
+    query = (
+        "Answer the request using ONLY the web page content below.\n\n"
+        f"Request: {prompt}\n\n--- PAGE CONTENT ---\n{page[:WEBFETCH_MAX_CONTENT]}"
+    )
+    try:
+        result = await Agent(ctx.model).run(query)
+    except Exception as exc:  # noqa: BLE001 - model/proxy failure -> tool result
+        return f"error: summarization failed: {exc}"
+    return str(result.output or "")
+
+
+def todo_write(todos: list[TodoItem]) -> str:
+    """Record the agent's task checklist.
+
+    The harness runs autonomously with no interactive UI, so this is a
+    stateless tracker: it acknowledges the list (keeping the Claude-trained
+    model on its planning rails) without external side effects.
+    """
+    if not todos:
+        return "todo list cleared"
+    marks = {"completed": "x", "in_progress": "~"}
+    lines = [f"[{marks.get(str(t.get('status', '')), ' ')}] {t.get('content', '')}" for t in todos]
+    return "todo list:\n" + "\n".join(lines)
+
+
+def exit_plan_mode(plan: str) -> str:
+    """Acknowledge the end of planning. The harness has no interactive plan
+    gate, so it records the plan and lets the agent proceed."""
+    log(f"ExitPlanMode: {plan[:200]}")
+    return "Plan acknowledged — proceeding with execution."
+
+
+# Claude tool name -> (callable, one-line description). The function names stay
+# idiomatic snake_case; `pydantic_ai.Tool` exposes them under the Claude names.
+# `Callable[..., Any]`: most tools return `str`, but WebFetch is an async
+# ctx-taking tool — pydantic-ai's `Tool` adapts both.
+NATIVE_TOOLS: dict[str, tuple[Callable[..., Any], str]] = {
+    "Bash": (bash, "Run a shell command in the repository workspace."),
+    "Read": (read_file, "Read a UTF-8 text file (optional line offset/limit)."),
+    "Write": (write_file, "Create or overwrite a workspace text file."),
+    "Edit": (edit_file, "Replace a string in a workspace file."),
+    "MultiEdit": (multi_edit, "Apply multiple string replacements to one file atomically."),
+    "Grep": (grep, "Recursively regex-search workspace files."),
+    "Glob": (glob_search, "List workspace paths matching a glob pattern."),
+    "LS": (list_dir, "List a workspace directory's entries."),
+    "WebFetch": (web_fetch, "Fetch a URL and answer a prompt about its content."),
+    "TodoWrite": (todo_write, "Record the agent's task checklist."),
+    "ExitPlanMode": (exit_plan_mode, "Signal the end of planning and proceed."),
+}
+
+
+def select_native_tools(
+    allowed: frozenset[str] | None, permission_mode: str | None
+) -> list[Tool[None]]:
+    """Build the native `Tool`s, honoring gh-aw's allow-list and permission
+    mode. `allowed=None` (flag absent) keeps every tool. `plan` mode
+    withholds workspace-mutating tools.
+    """
+    plan = permission_mode == "plan"
+    tools: list[Tool[None]] = []
+    for name in NATIVE_TOOL_NAMES:
+        if allowed is not None and name not in allowed:
+            continue
+        if plan and name in MUTATING_TOOLS:
+            continue
+        fn, desc = NATIVE_TOOLS[name]
+        tools.append(Tool(fn, name=name, description=desc))
+    return tools
+
+
+# --------------------------------------------------------------------------- #
+# Claude-compatible stream-json output
+# --------------------------------------------------------------------------- #
 def emit(obj: dict[str, Any]) -> None:
     """Write one Claude-style stream-json line to stdout."""
     sys.stdout.write(json.dumps(obj) + "\n")
@@ -387,23 +684,26 @@ def emit_result(
     )
 
 
-async def log_mcp_tools(mcp_servers: list[Any]) -> None:
-    """Log the tool names each connected MCP server exposes, so a missing or
-    renamed safe-outputs tool is immediately visible."""
+async def log_mcp_tools(mcp_servers: Iterable[AbstractToolset[Any]]) -> None:
+    """Log the tool names each connected MCP server exposes (post-filter), so a
+    missing or renamed safe-outputs tool is immediately visible."""
     for server in mcp_servers:
-        prefix = getattr(server, "label", None) or getattr(server, "id", "?")
+        label = getattr(server, "label", None) or getattr(server, "id", "?")
+        lister = getattr(server, "list_tools", None)
+        if lister is None:
+            continue
+        names: list[str] | str
         try:
-            tools = await server.list_tools()
-            names = [getattr(t, "name", str(t)) for t in tools]
+            tools: Any = await lister()
+            names = [str(getattr(t, "name", "?")) for t in tools]
         except Exception as exc:  # noqa: BLE001 - discovery is diagnostic only
             names = f"<list_tools failed: {exc!r}>"
-        log(f"MCP server {prefix!r} tools={names}")
+        log(f"MCP server {label!r} tools={names}")
 
 
-def emit_tool_activity(messages: list[Any]) -> int:
+def emit_tool_activity(messages: Sequence[Any]) -> int:
     """Emit Claude-style tool_use / tool_result blocks from the run's message
-    history so tool calls are visible to gh-aw's parser and in the log.
-    Returns the number of tool calls observed."""
+    history so tool calls are visible to gh-aw's parser. Returns the count."""
     tool_calls = 0
     for message in messages:
         for part in getattr(message, "parts", []):
@@ -446,15 +746,14 @@ def emit_tool_activity(messages: list[Any]) -> int:
 
 
 def log_safe_outputs_state() -> None:
-    """Whether anything reached the gh-aw safe-outputs sink — this file is the
-    signal that gates the downstream safe_outputs job."""
+    """Whether anything reached the gh-aw safe-outputs sink — this file gates
+    the downstream safe_outputs job."""
     path = os.environ.get("GH_AW_SAFE_OUTPUTS")
     if not path:
         log("GH_AW_SAFE_OUTPUTS not set")
         return
     try:
-        with open(path, encoding="utf-8") as fh:
-            data = fh.read()
+        data = pathlib.Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         log(f"GH_AW_SAFE_OUTPUTS unreadable ({path}): {exc!r}")
         return
@@ -464,8 +763,21 @@ def log_safe_outputs_state() -> None:
         log(f"  safe-output: {ln[:300]}")
 
 
-async def run(prompt: str, model: Model, label: str, mcp_servers: list[Any], session_id: str) -> int:
-    agent = Agent(model, tools=NATIVE_TOOLS, toolsets=mcp_servers or None)
+async def run(
+    prompt: str,
+    model: Model,
+    label: str,
+    native_tools: list[Tool[None]],
+    mcp_servers: list[AbstractToolset[Any]],
+    session_id: str,
+) -> int:
+    agent = Agent(
+        model,
+        instructions=INSTRUCTIONS,
+        tools=native_tools,
+        toolsets=mcp_servers or None,
+    )
+    limits = UsageLimits(request_limit=_request_limit())
     emit({"type": "system", "subtype": "init", "session_id": session_id, "model": label})
 
     started = time.perf_counter()
@@ -473,9 +785,9 @@ async def run(prompt: str, model: Model, label: str, mcp_servers: list[Any], ses
         if mcp_servers:
             async with agent:
                 await log_mcp_tools(mcp_servers)
-                result = await agent.run(prompt)
+                result = await agent.run(prompt, usage_limits=limits)
         else:
-            result = await agent.run(prompt)
+            result = await agent.run(prompt, usage_limits=limits)
     except Exception as exc:  # noqa: BLE001 - surface as a Claude-style error result
         log(f"agent run failed: {exc!r}")
         emit_result(
@@ -490,7 +802,6 @@ async def run(prompt: str, model: Model, label: str, mcp_servers: list[Any], ses
     duration_ms = round((time.perf_counter() - started) * 1000)
     messages = result.all_messages()
     tool_calls = emit_tool_activity(messages)
-    # One "turn" per model response (a request/response round trip).
     num_turns = sum(isinstance(m, ModelResponse) for m in messages)
     log(f"tool calls observed: {tool_calls}, turns: {num_turns}")
 
@@ -506,21 +817,35 @@ async def run(prompt: str, model: Model, label: str, mcp_servers: list[Any], ses
 
 
 def main() -> int:
-    args = parse_args(sys.argv[1:])
-    configure_observability()
-    prompt = resolve_prompt(args)
-    if not prompt.strip():
-        log("empty prompt — nothing to do")
-        emit_result("empty prompt", usage=None, session_id="none", is_error=True)
+    """Entry point. Any failure is surfaced as a Claude-style stream-json error
+    result so gh-aw always has a structured outcome to parse (never an opaque
+    'no structured log entries' run)."""
+    session_id = (os.environ.get("GITHUB_RUN_ID") or "local") + "-" + uuid.uuid4().hex[:8]
+    try:
+        args = parse_args(sys.argv[1:])
+        configure_observability()
+        prompt = resolve_prompt(args)
+        if not prompt.strip():
+            log("empty prompt — nothing to do")
+            emit_result("empty prompt", usage=None, session_id=session_id, is_error=True)
+            return 1
+        model, label = build_model(args)
+        native_tools = select_native_tools(args.allowed_tools, args.permission_mode)
+        mcp_servers = build_mcp_servers(args)
+        log(
+            f"model={label} permission_mode={args.permission_mode or '(none)'} "
+            f"request_limit={_request_limit()} "
+            f"native_tools={[t.name for t in native_tools]} "
+            f"mcp_servers={len(mcp_servers)} prompt_chars={len(prompt)}"
+        )
+        started = time.time()
+        rc = asyncio.run(run(prompt, model, label, native_tools, mcp_servers, session_id))
+        log(f"done in {time.time() - started:.1f}s rc={rc}")
+        return rc
+    except Exception as exc:  # noqa: BLE001 - startup failures must still be structured
+        log(f"FATAL startup error: {exc!r}")
+        emit_result(f"harness startup failed: {exc}", usage=None, session_id=session_id, is_error=True)
         return 1
-    model, label = build_model(args)
-    session_id = os.environ.get("GITHUB_RUN_ID", "") + "-" + uuid.uuid4().hex[:8]
-    mcp_servers = build_mcp_servers(args)
-    log(f"model={label} mcp_servers={len(mcp_servers)} prompt_chars={len(prompt)}")
-    started = time.time()
-    rc = asyncio.run(run(prompt, model, label, mcp_servers, session_id))
-    log(f"done in {time.time() - started:.1f}s rc={rc}")
-    return rc
 
 
 if __name__ == "__main__":

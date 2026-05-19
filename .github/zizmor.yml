@@ -28,6 +28,11 @@ rules:
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-docs-drift.lock.yml
       - pydantic-ai-pr-selftest.lock.yml
+      - pydantic-ai-provider-mapping-sweep.lock.yml
+      - pydantic-ai-roundtrip-sweep.lock.yml
+      - pydantic-ai-regression-detector.lock.yml
+      - pydantic-ai-provider-parity-explore.lock.yml
+      - pydantic-ai-streaming-resilience-sweep.lock.yml
 
   # `harness-compat.yml` calls a reusable workflow in `pydantic/pydantic-ai-harness`, an
   # org-internal repo under the same maintenance group. SHA-pinning the cross-repo reference

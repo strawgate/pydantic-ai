@@ -146,60 +146,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: none
+      contents: read
     outputs:
-      dynamic_prompt: ${{ steps.logfire.outputs.dynamic_prompt }}
+      dynamic_prompt: ${{ steps.resolve.outputs.dynamic_prompt }}
     steps:
-      - name: Fetch agent prompt from Logfire managed variables
-        id: logfire
-        env:
-          LOGFIRE_READ_KEY: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
-          LOGFIRE_BASE_URL: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
-          LOGFIRE_VARIABLE_KEY: gh_aw_pydantic_ai_docs_drift_prompt
-          TARGETING_KEY: gh-aw-${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          emit_prompt() {
-            {
-              echo "dynamic_prompt<<__GH_AW_DYNAMIC_PROMPT_EOF__"
-              printf '%s\n' "$1"
-              echo "__GH_AW_DYNAMIC_PROMPT_EOF__"
-            } >> "$GITHUB_OUTPUT"
-          }
-
-          # Prompt iteration via Logfire is opt-in. If the read key is not
-          # configured, fall back to the baked-in instructions below so the
-          # workflow still runs (just without live prompt overrides).
-          if [ -z "${LOGFIRE_READ_KEY:-}" ]; then
-            echo "::notice::LOGFIRE_READ_EXTERNAL_VARIABLES not set — using baked-in static prompt only."
-            emit_prompt ""
-            exit 0
-          fi
-
-          RESPONSE="$(curl --fail --silent --show-error \
-            --max-time 20 \
-            -X POST \
-            -H "Authorization: Bearer ${LOGFIRE_READ_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"context\":{\"targetingKey\":\"${TARGETING_KEY}\"}}" \
-            "${LOGFIRE_BASE_URL%/}/v1/ofrep/v1/evaluate/flags/${LOGFIRE_VARIABLE_KEY}")" || {
-              echo "::warning::Logfire OFREP request failed — using baked-in static prompt only."
-              emit_prompt ""
-              exit 0
-            }
-
-          PROMPT="$(printf '%s' "$RESPONSE" | jq -r '.value // empty')"
-
-          if [ -z "$PROMPT" ]; then
-            REASON="$(printf '%s' "$RESPONSE" | jq -r '.reason // "UNKNOWN"')"
-            echo "::notice::No Logfire value for ${LOGFIRE_VARIABLE_KEY} (reason: ${REASON}) — using baked-in static prompt only."
-            emit_prompt ""
-            exit 0
-          fi
-
-          emit_prompt "$PROMPT"
-          echo "Loaded dynamic prompt (${#PROMPT} chars) from Logfire variable '${LOGFIRE_VARIABLE_KEY}'."
+      - name: Check out the prompt resolver action and default prompt
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/fetch-dynamic-prompt
+            .github/workflows/shared/prompts/pydantic-ai-docs-drift.md
+          sparse-checkout-cone-mode: false
+      - name: Resolve agent prompt (Logfire managed variable, else committed default)
+        id: resolve
+        uses: ./.github/actions/fetch-dynamic-prompt
+        with:
+          logfire-variable-key: gh_aw_pydantic_ai_docs_drift_prompt
+          default-prompt-file: .github/workflows/shared/prompts/pydantic-ai-docs-drift.md
+          logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
+          logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

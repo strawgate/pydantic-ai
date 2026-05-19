@@ -148,62 +148,24 @@ jobs:
     permissions:
       contents: read
     outputs:
-      dynamic_prompt: ${{ steps.logfire.outputs.dynamic_prompt }}
+      dynamic_prompt: ${{ steps.resolve.outputs.dynamic_prompt }}
     steps:
-      - name: Check out the default prompt file
+      - name: Check out the prompt resolver action and default prompt
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          sparse-checkout: .github/workflows/shared/prompts/pydantic-ai-streaming-resilience-sweep.md
+          sparse-checkout: |
+            .github/actions/fetch-dynamic-prompt
+            .github/workflows/shared/prompts/pydantic-ai-streaming-resilience-sweep.md
           sparse-checkout-cone-mode: false
       - name: Resolve agent prompt (Logfire managed variable, else committed default)
-        id: logfire
-        env:
-          LOGFIRE_READ_KEY: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
-          LOGFIRE_BASE_URL: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
-          LOGFIRE_VARIABLE_KEY: gh_aw_pydantic_ai_streaming_resilience_sweep_prompt
-          TARGETING_KEY: gh-aw-${{ github.repository }}
-          DEFAULT_PROMPT_FILE: .github/workflows/shared/prompts/pydantic-ai-streaming-resilience-sweep.md
-        run: |
-          set -euo pipefail
-
-          emit_prompt() {
-            {
-              echo "dynamic_prompt<<__GH_AW_DYNAMIC_PROMPT_EOF__"
-              printf '%s\n' "$1"
-              echo "__GH_AW_DYNAMIC_PROMPT_EOF__"
-            } >> "$GITHUB_OUTPUT"
-          }
-
-          # The Logfire managed variable holds the COMPLETE prompt. When it is
-          # unset or unreachable, fall back to the full committed default so the
-          # agent always receives a complete prompt — never a partial one.
-          use_default() {
-            echo "::notice::$1 — using the committed default prompt (${DEFAULT_PROMPT_FILE})."
-            emit_prompt "$(cat "${DEFAULT_PROMPT_FILE}")"
-            exit 0
-          }
-
-          [ -n "${LOGFIRE_READ_KEY:-}" ] || use_default "LOGFIRE_READ_EXTERNAL_VARIABLES not set"
-
-          RESPONSE="$(curl --fail --silent --show-error \
-            --max-time 20 \
-            -X POST \
-            -H "Authorization: Bearer ${LOGFIRE_READ_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"context\":{\"targetingKey\":\"${TARGETING_KEY}\"}}" \
-            "${LOGFIRE_BASE_URL%/}/v1/ofrep/v1/evaluate/flags/${LOGFIRE_VARIABLE_KEY}")" \
-            || use_default "Logfire OFREP request failed"
-
-          PROMPT="$(printf '%s' "$RESPONSE" | jq -r '.value // empty')"
-
-          if [ -z "$PROMPT" ]; then
-            REASON="$(printf '%s' "$RESPONSE" | jq -r '.reason // "UNKNOWN"')"
-            use_default "No Logfire value for ${LOGFIRE_VARIABLE_KEY} (reason: ${REASON})"
-          fi
-
-          emit_prompt "$PROMPT"
-          echo "Loaded full prompt (${#PROMPT} chars) from Logfire variable '${LOGFIRE_VARIABLE_KEY}'."
+        id: resolve
+        uses: ./.github/actions/fetch-dynamic-prompt
+        with:
+          logfire-variable-key: gh_aw_pydantic_ai_streaming_resilience_sweep_prompt
+          default-prompt-file: .github/workflows/shared/prompts/pydantic-ai-streaming-resilience-sweep.md
+          logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
+          logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

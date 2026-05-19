@@ -54,15 +54,18 @@ After editing any `.md`, recompile the lockfiles with the `gh aw` CLI:
 
 ```bash
 gh extension install githubnext/gh-aw   # or build from source
-gh aw compile --action-mode dev \
+GHAW_SHA=27f07dd9efd43d19f8b0f6928285d4efd97c3b12  # pin matching the compiler
+gh aw compile --actions-repo github/gh-aw --action-tag "$GHAW_SHA" \
   pydantic-ai-bug-hunter pydantic-ai-docs-drift pydantic-ai-pr-selftest
 ```
 
-`--action-mode dev` must be passed explicitly (do not rely on auto-detection,
-which selects a mode that emits `./actions/setup` with no preceding checkout).
-`dev` mode prepends a "Checkout actions folder" step that sparse-checks-out
-the gh-aw `actions/` bundle from upstream `github/gh-aw` into the workspace
-(`persist-credentials: false`), so `./actions/setup` resolves without
-vendoring the 11MB bundle into this repo. Commit the regenerated `*.lock.yml`. They are generated artifacts (excluded
-from the whitespace pre-commit hooks and the `secrets-outside-env` zizmor
-audit, like `uv.lock`).
+`--action-tag` (a pinned `github/gh-aw` commit SHA) makes the lockfiles
+reference `github/gh-aw/actions/setup@<sha>` as a normal **remote** composite
+action. The default/`dev`/`script` modes instead emit a local `./actions/setup`
+that only resolves in repos that vendor gh-aw's 4–11MB `actions/` bundle (the
+gh-aw repo itself does; this one does not) — without it the runner's auto
+"Post Setup Scripts" step fails. Pin the SHA to the gh-aw build used to
+compile so the action code matches the generated YAML; bump it together with
+the compiler. Commit the regenerated `*.lock.yml` — they are generated
+artifacts (excluded from the whitespace pre-commit hooks and the
+`secrets-outside-env` zizmor audit, like `uv.lock`).

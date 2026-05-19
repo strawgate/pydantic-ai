@@ -112,8 +112,8 @@ jobs:
       - name: Fetch agent prompt from Logfire managed variables
         id: logfire
         env:
-          LOGFIRE_READ_KEY: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES_KEY }}
-          LOGFIRE_API_HOST: logfire-api.pydantic.dev
+          LOGFIRE_READ_KEY: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
+          LOGFIRE_BASE_URL: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
           LOGFIRE_VARIABLE_KEY: gh_aw_pydantic_ai_bug_hunter_prompt
           TARGETING_KEY: gh-aw-${{ github.repository }}
         run: |
@@ -131,7 +131,7 @@ jobs:
           # configured, fall back to the baked-in instructions below so the
           # workflow still runs (just without live prompt overrides).
           if [ -z "${LOGFIRE_READ_KEY:-}" ]; then
-            echo "::notice::LOGFIRE_READ_EXTERNAL_VARIABLES_KEY not set — using baked-in static prompt only."
+            echo "::notice::LOGFIRE_READ_EXTERNAL_VARIABLES not set — using baked-in static prompt only."
             emit_prompt ""
             exit 0
           fi
@@ -142,7 +142,7 @@ jobs:
             -H "Authorization: Bearer ${LOGFIRE_READ_KEY}" \
             -H "Content-Type: application/json" \
             -d "{\"context\":{\"targetingKey\":\"${TARGETING_KEY}\"}}" \
-            "https://${LOGFIRE_API_HOST}/v1/ofrep/v1/evaluate/flags/${LOGFIRE_VARIABLE_KEY}")" || {
+            "${LOGFIRE_BASE_URL%/}/v1/ofrep/v1/evaluate/flags/${LOGFIRE_VARIABLE_KEY}")" || {
               echo "::warning::Logfire OFREP request failed — using baked-in static prompt only."
               emit_prompt ""
               exit 0

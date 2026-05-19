@@ -29,13 +29,20 @@ Repository **secrets**:
 - `ANTHROPIC_API_KEY` — key for the MiniMax Anthropic-compatible endpoint
   (`https://api.minimax.io/anthropic`); injected by gh-aw's AWF proxy.
 - `LOGFIRE_WRITE_TOKEN` — Logfire project write token for OTLP trace export.
-- `LOGFIRE_READ_EXTERNAL_VARIABLES_KEY` — *optional*; enables runtime prompt
+- `LOGFIRE_READ_EXTERNAL_VARIABLES` — *optional*; enables runtime prompt
   overrides. If unset, workflows run on the baked-in static prompts.
 
 Repository **variables**:
 
-- `GH_AW_HARNESS_MODEL` — model name passed to the harness (e.g. a MiniMax
-  model id). Defaults to `claude-sonnet-4-5` inside the harness if unset.
+- `MODEL` — model name passed to the harness (e.g. a MiniMax model id).
+  Defaults to `claude-sonnet-4-5` inside the harness if unset.
+- `LOGFIRE_URL` — *optional*; base URL for the dynamic-prompt OFREP fetch.
+  May be set as a variable or secret. Defaults to
+  `https://logfire-api.pydantic.dev`. Note: the **trace-export** endpoint in
+  `shared/otel-logfire.md` is a separate baked compile-time literal (gh-aw
+  adds its host to the AWF firewall allowlist at compile time, so it can't
+  read a variable) — if you use a non-standard/self-hosted Logfire, that
+  literal must be updated to match and the workflows recompiled.
 
 ## Iterating prompts from Logfire
 

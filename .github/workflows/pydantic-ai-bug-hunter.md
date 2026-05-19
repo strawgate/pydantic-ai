@@ -13,7 +13,7 @@ permissions:
 # `git log --since=...` would see only the tip commit. fetch-depth: 0 gives
 # the agent the real commit history it needs to find recent changes.
 checkout:
-  - fetch-depth: 0
+  fetch-depth: 0
 concurrency:
   group: ${{ github.workflow }}-bug-hunter
   cancel-in-progress: true

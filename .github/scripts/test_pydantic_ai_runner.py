@@ -283,6 +283,21 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
     assert {"WebFetch", "TodoWrite", "ExitPlanMode"} <= names  # non-mutating
 
 
+def test_request_limit_default_and_override(monkeypatch):
+    monkeypatch.delenv("GH_AW_HARNESS_REQUEST_LIMIT", raising=False)
+    assert har._request_limit() == har.DEFAULT_REQUEST_LIMIT == 100
+    monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", "250")
+    assert har._request_limit() == 250
+    for bad in ("0", "-5", "abc", ""):
+        monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", bad)
+        assert har._request_limit() == 100
+
+
+def test_instructions_encourage_parallel_tool_calls():
+    assert har.INSTRUCTIONS.strip()
+    assert "parallel" in har.INSTRUCTIONS.lower()
+
+
 # --------------------------------------------------------------------------- #
 # model resolution (proxy semantics — unchanged)
 # --------------------------------------------------------------------------- #

@@ -60,8 +60,41 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.usage import UsageLimits
 
 PROXY_PLACEHOLDER = "gh-aw-proxy-injected"
+
+# Default cap on model requests per run. The Claude Code CLI the harness
+# replaces has no such cap; pydantic-ai's built-in default is only 50, which
+# these deep multi-step agents exhaust mid-task. gh-aw's api-proxy still
+# enforces the real backstop (maxRuns/token budget). Override per workflow
+# with GH_AW_HARNESS_REQUEST_LIMIT.
+DEFAULT_REQUEST_LIMIT = 100
+
+# System-level execution guidance (not task content — the task prompt is the
+# user message / Logfire-managed variable). pydantic-ai runs the tool calls in
+# a single model response concurrently, so batching independent calls is both
+# faster and far cheaper in model requests.
+INSTRUCTIONS = (
+    "You can call multiple tools in a single turn. When tool calls are "
+    "independent (no call needs another call's output), issue them together "
+    "in one turn so they run in parallel — this is faster and uses far fewer "
+    "model requests. Only chain tools sequentially when one genuinely needs a "
+    "previous tool's result."
+)
+
+
+def _request_limit() -> int:
+    """Per-run model-request cap (GH_AW_HARNESS_REQUEST_LIMIT, else default)."""
+    raw = os.environ.get("GH_AW_HARNESS_REQUEST_LIMIT")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return DEFAULT_REQUEST_LIMIT
 
 # Claude Code native tools the harness implements. The model is trained on
 # these exact names/parameters, so matching them (rather than a custom set +
@@ -738,7 +771,13 @@ async def run(
     mcp_servers: list[AbstractToolset[Any]],
     session_id: str,
 ) -> int:
-    agent = Agent(model, tools=native_tools, toolsets=mcp_servers or None)
+    agent = Agent(
+        model,
+        instructions=INSTRUCTIONS,
+        tools=native_tools,
+        toolsets=mcp_servers or None,
+    )
+    limits = UsageLimits(request_limit=_request_limit())
     emit({"type": "system", "subtype": "init", "session_id": session_id, "model": label})
 
     started = time.perf_counter()
@@ -746,9 +785,9 @@ async def run(
         if mcp_servers:
             async with agent:
                 await log_mcp_tools(mcp_servers)
-                result = await agent.run(prompt)
+                result = await agent.run(prompt, usage_limits=limits)
         else:
-            result = await agent.run(prompt)
+            result = await agent.run(prompt, usage_limits=limits)
     except Exception as exc:  # noqa: BLE001 - surface as a Claude-style error result
         log(f"agent run failed: {exc!r}")
         emit_result(
@@ -795,6 +834,7 @@ def main() -> int:
         mcp_servers = build_mcp_servers(args)
         log(
             f"model={label} permission_mode={args.permission_mode or '(none)'} "
+            f"request_limit={_request_limit()} "
             f"native_tools={[t.name for t in native_tools]} "
             f"mcp_servers={len(mcp_servers)} prompt_chars={len(prompt)}"
         )

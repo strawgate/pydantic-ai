@@ -2,8 +2,8 @@
 
 These cover the gh-aw compatibility surface with no network or credentials:
 argv tolerance, prompt recovery, model resolution, MCP-config translation and
-allow-list filtering, Claude-named native tools, ``--allowed-tools`` /
-``--permission-mode`` enforcement, structured-error guarantees, and the
+allow-list filtering, Claude-named native tools, `--allowed-tools` /
+`--permission-mode` enforcement, structured-error guarantees, and the
 stream-json schema.
 
 The single live test is skipped unless an OpenAI-compatible endpoint is given

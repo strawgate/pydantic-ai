@@ -15,15 +15,15 @@ gh-aw runs the agent engine like the Claude Code CLI:
       --mcp-config <mcp-servers.json> --prompt-file <prompt.txt> \\
       [--model <model>] "<rendered prompt>"
 
-With ``engine.command`` set, ``<command>`` is this script. It speaks Claude
+With `engine.command` set, `<command>` is this script. It speaks Claude
 Code's argv, recovers the prompt, builds a `pydantic-ai` agent backed by the
 gh-aw-injected Anthropic/OpenAI-compatible proxy, exposes Claude-named native
-tools plus gh-aw's MCP servers (GitHub + the ``safeoutputs`` write-sink),
-enforces gh-aw's ``--allowed-tools`` allow-list, and emits Claude-compatible
-``stream-json`` so gh-aw's log parser and token accounting keep working.
+tools plus gh-aw's MCP servers (GitHub + the `safeoutputs` write-sink),
+enforces gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
+`stream-json` so gh-aw's log parser and token accounting keep working.
 
 Credentials note: under gh-aw the real API key is *excluded* from the agent
-container (``awf --exclude-env ANTHROPIC_API_KEY``). The AWF api-proxy injects
+container (`awf --exclude-env ANTHROPIC_API_KEY`). The AWF api-proxy injects
 it transparently; the harness only ever sends a placeholder token to the
 proxy base URL — never a real upstream key.
 """
@@ -86,11 +86,11 @@ class Args:
 
 
 def _split_allowed_tools(value: str | None) -> frozenset[str] | None:
-    """Parse Claude's ``--allowed-tools`` CSV into base tool names.
+    """Parse Claude's `--allowed-tools` CSV into base tool names.
 
-    Entries may carry a permission scope, e.g. ``Edit(/tmp/*)`` or
-    ``Bash(git:*)`` — only the base name gates availability here, so the
-    parenthesised scope is stripped. Returns ``None`` when the flag is absent
+    Entries may carry a permission scope, e.g. `Edit(/tmp/*)` or
+    `Bash(git:*)` — only the base name gates availability here, so the
+    parenthesised scope is stripped. Returns `None` when the flag is absent
     so non-gh-aw/local runs keep every tool.
     """
     if value is None:
@@ -150,7 +150,7 @@ def _first_env(*names: str) -> str | None:
 
 
 def _use_openai_provider(provider: str, openai_base: str | None, anthropic_base: str | None) -> bool:
-    """Select the OpenAI-compatible path for an explicit ``openai:`` model
+    """Select the OpenAI-compatible path for an explicit `openai:` model
     prefix, or when only OPENAI_BASE_URL is configured (local / non-gh-aw use).
     Under gh-aw, ANTHROPIC_BASE_URL is set, so the Anthropic path is used."""
     if provider == "openai":
@@ -164,13 +164,13 @@ def build_model(args: Args) -> tuple[Model, str]:
     """Build the `pydantic-ai` model and a human-readable label.
 
     The harness behaves like the stock Claude Code CLI: gh-aw sets
-    ``ANTHROPIC_BASE_URL`` (its in-cluster transparent proxy) and a placeholder
+    `ANTHROPIC_BASE_URL` (its in-cluster transparent proxy) and a placeholder
     auth token; the firewall's api-proxy swaps in the real key and rewrites the
-    base path. ``pydantic-ai``'s default ``AnthropicProvider`` requires
-    ``ANTHROPIC_API_KEY`` and ignores ``ANTHROPIC_AUTH_TOKEN``, so the Anthropic
+    base path. `pydantic-ai`'s default `AnthropicProvider` requires
+    `ANTHROPIC_API_KEY` and ignores `ANTHROPIC_AUTH_TOKEN`, so the Anthropic
     client is constructed explicitly with a bearer token, exactly like the CLI.
     Provider selection is intentionally *not* delegated to
-    ``infer_model()``: the proxy is the provider abstraction and the firewall
+    `infer_model()`: the proxy is the provider abstraction and the firewall
     only allowlists the proxy host, so the harness must stay a proxy client.
     """
     raw = (
@@ -230,8 +230,8 @@ def configure_observability() -> None:
 def _mcp_tool_allowed(server: str, allowed: frozenset[str]) -> Callable[[RunContext[Any], ToolDefinition], bool]:
     """Build a `MCPToolset.filtered` predicate enforcing gh-aw's allow-list.
 
-    gh-aw lists MCP tools as ``mcp__<server>`` (whole server) or
-    ``mcp__<server>__<tool>`` (one tool). The harness does not prefix tool
+    gh-aw lists MCP tools as `mcp__<server>` (whole server) or
+    `mcp__<server>__<tool>` (one tool). The harness does not prefix tool
     names, so the model sees a server tool by its canonical name; map it back
     to the gh-aw identifier here.
     """
@@ -244,15 +244,15 @@ def _mcp_tool_allowed(server: str, allowed: frozenset[str]) -> Callable[[RunCont
 
 
 def build_mcp_servers(args: Args) -> list[AbstractToolset[Any]]:
-    """Translate gh-aw's Claude-format ``mcp-servers.json`` into `pydantic-ai`
+    """Translate gh-aw's Claude-format `mcp-servers.json` into `pydantic-ai`
     toolsets.
 
-    ``container:``-type servers (e.g. the GitHub server) are launched by
+    `container:`-type servers (e.g. the GitHub server) are launched by
     gh-aw's gateway and reached over its http endpoint, so only stdio/http
     entries are instantiated here. Tools are **not** prefixed: gh-aw's
-    safe-output instructions reference canonical names (e.g. ``add_comment``);
-    a ``PrefixedToolset`` would rename them and cause intermittent posting.
-    When ``--allowed-tools`` is set, each server is wrapped in a filter so the
+    safe-output instructions reference canonical names (e.g. `add_comment`);
+    a `PrefixedToolset` would rename them and cause intermittent posting.
+    When `--allowed-tools` is set, each server is wrapped in a filter so the
     model only sees gh-aw-permitted tools.
     """
     path = args.mcp_config or os.environ.get("GH_AW_MCP_CONFIG")
@@ -446,7 +446,7 @@ def select_native_tools(
     allowed: frozenset[str] | None, permission_mode: str | None
 ) -> list[Tool[None]]:
     """Build the native `Tool`s, honoring gh-aw's allow-list and permission
-    mode. ``allowed=None`` (flag absent) keeps every tool. ``plan`` mode
+    mode. `allowed=None` (flag absent) keeps every tool. `plan` mode
     withholds workspace-mutating tools.
     """
     plan = permission_mode == "plan"

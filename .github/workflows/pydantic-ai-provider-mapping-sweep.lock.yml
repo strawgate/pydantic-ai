@@ -1,4 +1,4 @@
-# gh-aw-metadata: {"schema_version":"v3","frontmatter_hash":"a5ef0eb943c8d9e114603cd9de65743b2f7f237939ba041f3c0cffa9e8d60cef","strict":true,"agent_id":"claude"}
+# gh-aw-metadata: {"schema_version":"v3","frontmatter_hash":"79d0a6273d9cdc634da179ebb1d6d78d67eaaaee61fb5ddd8c09d0e7286a4333","strict":true,"agent_id":"claude"}
 # gh-aw-manifest: {"version":1,"secrets":["ANTHROPIC_API_KEY","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_READ_EXTERNAL_VARIABLES","LOGFIRE_URL","LOGFIRE_WRITE_TOKEN"],"actions":[{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"v6.0.2"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e","version":"v6.4.0"},{"repo":"actions/setup-python","sha":"a309ff8b426b58ec0e2a45f0f869d46889d02405","version":"v6.2.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"08807647e7069bb48b6ef5acd8ec9567f424441b","version":"v8.1.0"},{"repo":"github/gh-aw/actions/setup","sha":"27f07dd9efd43d19f8b0f6928285d4efd97c3b12","version":"27f07dd9efd43d19f8b0f6928285d4efd97c3b12"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.25.46"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.25.46"},{"image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.25.46"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.25.46"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.3.9","digest":"sha256:64828b42a4482f58fab16509d7f8f495a6d97c972a98a68aff20543531ac0388","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.3.9@sha256:64828b42a4482f58fab16509d7f8f495a6d97c972a98a68aff20543531ac0388"},{"image":"ghcr.io/github/github-mcp-server:v1.0.3","digest":"sha256:2ac27ef03461ef2b877031b838a7d1fd7f12b12d4ace7796d8cad91446d55959","pinned_image":"ghcr.io/github/github-mcp-server:v1.0.3@sha256:2ac27ef03461ef2b877031b838a7d1fd7f12b12d4ace7796d8cad91446d55959"},{"image":"node:lts-alpine","digest":"sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f","pinned_image":"node:lts-alpine@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f"}]}
 #    ___                   _   _      
 #   / _ \                 | | (_)     
@@ -22,7 +22,7 @@
 #
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
-# Detect code changes that require documentation updates and file an issue. Runs on the Pydantic AI harness engine; the task prompt is iterable from a Logfire managed variable.
+# Audit one model provider's request/response mapping against its SDK and file a reproducible bug. Rotates providers; runs on the Pydantic AI harness engine; the prompt is iterable from a Logfire managed variable.
 #
 # Resolved workflow manifest:
 #   Imports:
@@ -57,11 +57,11 @@
 #   - ghcr.io/github/github-mcp-server:v1.0.3@sha256:2ac27ef03461ef2b877031b838a7d1fd7f12b12d4ace7796d8cad91446d55959
 #   - node:lts-alpine@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f
 
-name: "Pydantic AI Docs Drift"
+name: "Pydantic AI Provider Mapping Sweep"
 "on":
   schedule:
-  - cron: "50 4 * * 1"
-    # Friendly format: weekly on monday (scattered)
+  - cron: "35 8 * * *"
+    # Friendly format: daily (scattered)
   workflow_dispatch:
     inputs:
       aw_context:
@@ -74,9 +74,9 @@ permissions: {}
 
 concurrency:
   cancel-in-progress: true
-  group: ${{ github.workflow }}-docs-drift
+  group: ${{ github.workflow }}-provider-mapping-sweep
 
-run-name: "Pydantic AI Docs Drift"
+run-name: "Pydantic AI Provider Mapping Sweep"
 
 env:
   OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev
@@ -110,8 +110,8 @@ jobs:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-provider-mapping-sweep.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
       - name: Mask OTLP telemetry headers
         run: bash "${RUNNER_TEMP}/gh-aw/actions/mask_otlp_headers.sh"
@@ -123,7 +123,7 @@ jobs:
           GH_AW_INFO_MODEL: ${{ vars.GH_AW_MODEL_AGENT_CLAUDE || 'auto' }}
           GH_AW_INFO_VERSION: "2.1.141"
           GH_AW_INFO_AGENT_VERSION: "2.1.141"
-          GH_AW_INFO_WORKFLOW_NAME: "Pydantic AI Docs Drift"
+          GH_AW_INFO_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
           GH_AW_INFO_EXPERIMENTAL: "false"
           GH_AW_INFO_SUPPORTS_TOOLS_ALLOWLIST: "true"
           GH_AW_INFO_STAGED: "false"
@@ -132,7 +132,7 @@ jobs:
           GH_AW_INFO_AWF_VERSION: "v0.25.46"
           GH_AW_INFO_AWMG_VERSION: ""
           GH_AW_INFO_FIREWALL_TYPE: "squid"
-          GH_AW_INFO_FRONTMATTER_EMOJI: "📚"
+          GH_AW_INFO_FRONTMATTER_EMOJI: "🔌"
           GH_AW_COMPILED_STRICT: "true"
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
@@ -166,7 +166,7 @@ jobs:
         id: check-lock-file
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_AW_WORKFLOW_FILE: "pydantic-ai-docs-drift.lock.yml"
+          GH_AW_WORKFLOW_FILE: "pydantic-ai-provider-mapping-sweep.lock.yml"
           GH_AW_CONTEXT_WORKFLOW_REF: "${{ github.workflow_ref }}"
         with:
           script: |
@@ -191,20 +191,20 @@ jobs:
         run: |
           bash "${RUNNER_TEMP}/gh-aw/actions/create_prompt_first.sh"
           {
-          cat << 'GH_AW_PROMPT_bd43ac12db140b59_EOF'
+          cat << 'GH_AW_PROMPT_6f374c9b695602aa_EOF'
           <system>
-          GH_AW_PROMPT_bd43ac12db140b59_EOF
+          GH_AW_PROMPT_6f374c9b695602aa_EOF
           cat "${RUNNER_TEMP}/gh-aw/prompts/xpia.md"
           cat "${RUNNER_TEMP}/gh-aw/prompts/temp_folder_prompt.md"
           cat "${RUNNER_TEMP}/gh-aw/prompts/markdown.md"
           cat "${RUNNER_TEMP}/gh-aw/prompts/safe_outputs_prompt.md"
-          cat << 'GH_AW_PROMPT_bd43ac12db140b59_EOF'
+          cat << 'GH_AW_PROMPT_6f374c9b695602aa_EOF'
           <safe-output-tools>
           Tools: create_issue, missing_tool, missing_data, noop
           </safe-output-tools>
-          GH_AW_PROMPT_bd43ac12db140b59_EOF
+          GH_AW_PROMPT_6f374c9b695602aa_EOF
           cat "${RUNNER_TEMP}/gh-aw/prompts/mcp_cli_tools_prompt.md"
-          cat << 'GH_AW_PROMPT_bd43ac12db140b59_EOF'
+          cat << 'GH_AW_PROMPT_6f374c9b695602aa_EOF'
           <github-context>
           The following GitHub context information is available for this workflow:
           {{#if github.actor}}
@@ -236,13 +236,13 @@ jobs:
             - **Note**: If a branch you need is not in the list above and is not listed as an additional fetched ref, it has NOT been checked out. For private repositories you cannot fetch it without proper authentication. If the branch is required and not available, exit with an error and ask the user to add it to the `fetch:` option of the `checkout:` configuration (e.g., `fetch: ["refs/pulls/open/*"]` for all open PR refs, or `fetch: ["main", "feature/my-branch"]` for specific branches).
           </github-context>
           
-          GH_AW_PROMPT_bd43ac12db140b59_EOF
+          GH_AW_PROMPT_6f374c9b695602aa_EOF
           cat "${RUNNER_TEMP}/gh-aw/prompts/cli_proxy_with_safeoutputs_prompt.md"
-          cat << 'GH_AW_PROMPT_bd43ac12db140b59_EOF'
+          cat << 'GH_AW_PROMPT_6f374c9b695602aa_EOF'
           </system>
           {{#runtime-import .github/workflows/shared/otel-logfire.md}}
-          {{#runtime-import .github/workflows/pydantic-ai-docs-drift.md}}
-          GH_AW_PROMPT_bd43ac12db140b59_EOF
+          {{#runtime-import .github/workflows/pydantic-ai-provider-mapping-sweep.md}}
+          GH_AW_PROMPT_6f374c9b695602aa_EOF
           } > "$GH_AW_PROMPT"
       - name: Interpolate variables and render templates
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -337,7 +337,7 @@ jobs:
       GH_AW_ASSETS_BRANCH: ""
       GH_AW_ASSETS_MAX_SIZE_KB: 0
       GH_AW_MCP_LOG_DIR: /tmp/gh-aw/mcp-logs/safeoutputs
-      GH_AW_WORKFLOW_ID_SANITIZED: pydanticaidocsdrift
+      GH_AW_WORKFLOW_ID_SANITIZED: pydanticaiprovidermappingsweep
     outputs:
       checkout_pr_success: ${{ steps.checkout-pr.outputs.checkout_pr_success || 'true' }}
       effective_tokens: ${{ steps.parse-mcp-gateway.outputs.effective_tokens }}
@@ -359,8 +359,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-provider-mapping-sweep.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
       - name: Set runtime paths
         id: set-runtime-paths
@@ -457,15 +457,15 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/gh-aw/safeoutputs"
           mkdir -p /tmp/gh-aw/safeoutputs
           mkdir -p /tmp/gh-aw/mcp-logs/safeoutputs
-          cat > "${RUNNER_TEMP}/gh-aw/safeoutputs/config.json" << 'GH_AW_SAFE_OUTPUTS_CONFIG_3804f2a9ac00ef6d_EOF'
-          {"create_issue":{"close_older_issues":false,"close_older_key":"[docs-drift]","expires":168,"max":1,"title_prefix":"[docs-drift] "},"create_report_incomplete_issue":{},"missing_data":{},"missing_tool":{},"noop":{"max":1,"report-as-issue":"true"},"report_incomplete":{}}
-          GH_AW_SAFE_OUTPUTS_CONFIG_3804f2a9ac00ef6d_EOF
+          cat > "${RUNNER_TEMP}/gh-aw/safeoutputs/config.json" << 'GH_AW_SAFE_OUTPUTS_CONFIG_3be1db005eb584cb_EOF'
+          {"create_issue":{"close_older_issues":false,"close_older_key":"[provider-mapping-sweep]","expires":168,"max":1,"title_prefix":"[provider-mapping-sweep] "},"create_report_incomplete_issue":{},"missing_data":{},"missing_tool":{},"noop":{"max":1,"report-as-issue":"true"},"report_incomplete":{}}
+          GH_AW_SAFE_OUTPUTS_CONFIG_3be1db005eb584cb_EOF
       - name: Generate Safe Outputs Tools
         env:
           GH_AW_TOOLS_META_JSON: |
             {
               "description_suffixes": {
-                "create_issue": " CONSTRAINTS: Maximum 1 issue(s) can be created. Title will be prefixed with \"[docs-drift] \"."
+                "create_issue": " CONSTRAINTS: Maximum 1 issue(s) can be created. Title will be prefixed with \"[provider-mapping-sweep] \"."
               },
               "repo_params": {},
               "dynamic_tools": []
@@ -663,7 +663,7 @@ jobs:
           export MCP_GATEWAY_DOCKER_COMMAND='docker run -i --rm --network host --add-host host.docker.internal:127.0.0.1 --user '"${MCP_GATEWAY_UID}"':'"${MCP_GATEWAY_GID}"' --group-add '"${DOCKER_SOCK_GID}"' -v '"${DOCKER_SOCK_PATH}"':/var/run/docker.sock -e MCP_GATEWAY_PORT -e MCP_GATEWAY_DOMAIN -e MCP_GATEWAY_API_KEY -e MCP_GATEWAY_PAYLOAD_DIR -e MCP_GATEWAY_PAYLOAD_SIZE_THRESHOLD -e DOCKER_HOST=unix:///var/run/docker.sock -e DEBUG -e MCP_GATEWAY_LOG_DIR -e GH_AW_MCP_LOG_DIR -e GH_AW_SAFE_OUTPUTS -e GH_AW_SAFE_OUTPUTS_CONFIG_PATH -e GH_AW_SAFE_OUTPUTS_TOOLS_PATH -e GH_AW_ASSETS_BRANCH -e GH_AW_ASSETS_MAX_SIZE_KB -e GH_AW_ASSETS_ALLOWED_EXTS -e DEFAULT_BRANCH -e GITHUB_MCP_SERVER_TOKEN -e GITHUB_MCP_GUARD_MIN_INTEGRITY -e GITHUB_MCP_GUARD_REPOS -e GITHUB_REPOSITORY -e GITHUB_SERVER_URL -e GITHUB_SHA -e GITHUB_WORKSPACE -e GITHUB_TOKEN -e GITHUB_RUN_ID -e GITHUB_RUN_NUMBER -e GITHUB_RUN_ATTEMPT -e GITHUB_JOB -e GITHUB_ACTION -e GITHUB_EVENT_NAME -e GITHUB_EVENT_PATH -e GITHUB_ACTOR -e GITHUB_ACTOR_ID -e GITHUB_TRIGGERING_ACTOR -e GITHUB_WORKFLOW -e GITHUB_WORKFLOW_REF -e GITHUB_WORKFLOW_SHA -e GITHUB_REF -e GITHUB_REF_NAME -e GITHUB_REF_TYPE -e GITHUB_HEAD_REF -e GITHUB_BASE_REF -e GH_AW_SAFE_OUTPUTS_PORT -e GH_AW_SAFE_OUTPUTS_API_KEY -e GITHUB_AW_OTEL_TRACE_ID -e GITHUB_AW_OTEL_PARENT_SPAN_ID -v /tmp/gh-aw/mcp-payloads:/tmp/gh-aw/mcp-payloads:rw -v /opt:/opt:ro -v /tmp:/tmp:rw -v '"${GITHUB_WORKSPACE}"':'"${GITHUB_WORKSPACE}"':rw ghcr.io/github/gh-aw-mcpg:v0.3.9'
           
           GH_AW_NODE=$(which node 2>/dev/null || command -v node 2>/dev/null || echo node)
-          cat << GH_AW_MCP_CONFIG_7d2cc141199ede12_EOF | "$GH_AW_NODE" "${RUNNER_TEMP}/gh-aw/actions/start_mcp_gateway.cjs"
+          cat << GH_AW_MCP_CONFIG_f0a4ecd9bce5f6ed_EOF | "$GH_AW_NODE" "${RUNNER_TEMP}/gh-aw/actions/start_mcp_gateway.cjs"
           {
             "mcpServers": {
               "safeoutputs": {
@@ -694,7 +694,7 @@ jobs:
               }
             }
           }
-          GH_AW_MCP_CONFIG_7d2cc141199ede12_EOF
+          GH_AW_MCP_CONFIG_f0a4ecd9bce5f6ed_EOF
       - name: Mount MCP servers as CLIs
         id: mount-mcp-clis
         continue-on-error: true
@@ -1017,7 +1017,7 @@ jobs:
       contents: read
       issues: write
     concurrency:
-      group: "gh-aw-conclusion-pydantic-ai-docs-drift"
+      group: "gh-aw-conclusion-pydantic-ai-provider-mapping-sweep"
       cancel-in-progress: false
       queue: max
     outputs:
@@ -1035,8 +1035,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-provider-mapping-sweep.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
       - name: Download agent output artifact
         id: download-agent-output
@@ -1058,7 +1058,7 @@ jobs:
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           GH_AW_NOOP_MAX: "1"
-          GH_AW_WORKFLOW_NAME: "Pydantic AI Docs Drift"
+          GH_AW_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_AGENT_CONCLUSION: ${{ needs.agent.result }}
           GH_AW_NOOP_REPORT_AS_ISSUE: "true"
@@ -1074,7 +1074,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-          GH_AW_WORKFLOW_NAME: "Pydantic AI Docs Drift"
+          GH_AW_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_DETECTION_CONCLUSION: ${{ needs.detection.outputs.detection_conclusion }}
           GH_AW_DETECTION_REASON: ${{ needs.detection.outputs.detection_reason }}
@@ -1091,7 +1091,7 @@ jobs:
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           GH_AW_MISSING_TOOL_CREATE_ISSUE: "true"
-          GH_AW_WORKFLOW_NAME: "Pydantic AI Docs Drift"
+          GH_AW_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1105,7 +1105,7 @@ jobs:
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "true"
-          GH_AW_WORKFLOW_NAME: "Pydantic AI Docs Drift"
+          GH_AW_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1119,10 +1119,10 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-          GH_AW_WORKFLOW_NAME: "Pydantic AI Docs Drift"
+          GH_AW_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_AGENT_CONCLUSION: ${{ needs.agent.result }}
-          GH_AW_WORKFLOW_ID: "pydantic-ai-docs-drift"
+          GH_AW_WORKFLOW_ID: "pydantic-ai-provider-mapping-sweep"
           GH_AW_ACTION_FAILURE_ISSUE_EXPIRES_HOURS: "168"
           GH_AW_ENGINE_ID: "claude"
           GH_AW_CHECKOUT_PR_SUCCESS: ${{ needs.agent.outputs.checkout_pr_success }}
@@ -1169,8 +1169,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-provider-mapping-sweep.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
       - name: Download agent output artifact
         id: download-agent-output
@@ -1236,8 +1236,8 @@ jobs:
         if: always() && steps.detection_guard.outputs.run_detection == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          WORKFLOW_NAME: "Pydantic AI Docs Drift"
-          WORKFLOW_DESCRIPTION: "Detect code changes that require documentation updates and file an issue. Runs on the Pydantic AI harness engine; the task prompt is iterable from a Logfire managed variable."
+          WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
+          WORKFLOW_DESCRIPTION: "Audit one model provider's request/response mapping against its SDK and file a reproducible bug. Rotates providers; runs on the Pydantic AI harness engine; the prompt is iterable from a Logfire managed variable."
           HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
         with:
           script: |
@@ -1380,16 +1380,16 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/actions/fetch-dynamic-prompt
-            .github/workflows/shared/prompts/pydantic-ai-docs-drift.md
+            .github/workflows/shared/prompts/pydantic-ai-provider-mapping-sweep.md
           sparse-checkout-cone-mode: false
       - name: Resolve agent prompt (Logfire managed variable, else committed default)
         id: resolve
         uses: ./.github/actions/fetch-dynamic-prompt
         with:
-          default-prompt-file: .github/workflows/shared/prompts/pydantic-ai-docs-drift.md
+          default-prompt-file: .github/workflows/shared/prompts/pydantic-ai-provider-mapping-sweep.md
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
-          logfire-variable-key: gh_aw_pydantic_ai_docs_drift_prompt
+          logfire-variable-key: gh_aw_pydantic_ai_provider_mapping_sweep_prompt
 
   safe_outputs:
     needs:
@@ -1403,16 +1403,16 @@ jobs:
       issues: write
     timeout-minutes: 15
     env:
-      GH_AW_CALLER_WORKFLOW_ID: "${{ github.repository }}/pydantic-ai-docs-drift"
+      GH_AW_CALLER_WORKFLOW_ID: "${{ github.repository }}/pydantic-ai-provider-mapping-sweep"
       GH_AW_DETECTION_CONCLUSION: ${{ needs.detection.outputs.detection_conclusion }}
       GH_AW_DETECTION_REASON: ${{ needs.detection.outputs.detection_reason }}
       GH_AW_EFFECTIVE_TOKENS: ${{ needs.agent.outputs.effective_tokens }}
       GH_AW_ENGINE_ID: "claude"
       GH_AW_ENGINE_MODEL: ${{ needs.agent.outputs.model }}
       GH_AW_SAFE_OUTPUT_MESSAGES: "{\"activationComments\":\"false\"}"
-      GH_AW_WORKFLOW_EMOJI: "📚"
-      GH_AW_WORKFLOW_ID: "pydantic-ai-docs-drift"
-      GH_AW_WORKFLOW_NAME: "Pydantic AI Docs Drift"
+      GH_AW_WORKFLOW_EMOJI: "🔌"
+      GH_AW_WORKFLOW_ID: "pydantic-ai-provider-mapping-sweep"
+      GH_AW_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
     outputs:
       code_push_failure_count: ${{ steps.process_safe_outputs.outputs.code_push_failure_count }}
       code_push_failure_errors: ${{ steps.process_safe_outputs.outputs.code_push_failure_errors }}
@@ -1432,8 +1432,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Docs Drift"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-docs-drift.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Pydantic AI Provider Mapping Sweep"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/pydantic-ai-provider-mapping-sweep.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "2.1.141"
       - name: Mask OTLP telemetry headers
         run: bash "${RUNNER_TEMP}/gh-aw/actions/mask_otlp_headers.sh"
@@ -1468,7 +1468,7 @@ jobs:
           GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.pythonhosted.org,anaconda.org,anthropic.com,api.anthropic.com,api.github.com,api.minimax.io,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,cdn.playwright.dev,codeload.github.com,conda.anaconda.org,conda.binstar.org,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,files.pythonhosted.org,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.com,host.docker.internal,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,lfs.github.com,logfire-api.pydantic.dev,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,pip.pypa.io,playwright.download.prss.microsoft.com,ppa.launchpad.net,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,www.googleapis.com"
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_API_URL: ${{ github.api_url }}
-          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"create_issue\":{\"close_older_issues\":false,\"close_older_key\":\"[docs-drift]\",\"expires\":168,\"max\":1,\"title_prefix\":\"[docs-drift] \"},\"create_report_incomplete_issue\":{},\"missing_data\":{},\"missing_tool\":{},\"noop\":{\"max\":1,\"report-as-issue\":\"true\"},\"report_incomplete\":{}}"
+          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"create_issue\":{\"close_older_issues\":false,\"close_older_key\":\"[provider-mapping-sweep]\",\"expires\":168,\"max\":1,\"title_prefix\":\"[provider-mapping-sweep] \"},\"create_report_incomplete_issue\":{},\"missing_data\":{},\"missing_tool\":{},\"noop\":{\"max\":1,\"report-as-issue\":\"true\"},\"report_incomplete\":{}}"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |

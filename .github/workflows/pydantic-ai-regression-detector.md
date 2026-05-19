@@ -1,21 +1,21 @@
 ---
-emoji: "📚"
-name: "Pydantic AI Docs Drift"
-description: "Detect code changes that require documentation updates and file an issue. Runs on the Pydantic AI harness engine; the task prompt is iterable from a Logfire managed variable."
-# Fuzzy schedule: docs drift accumulates slowly, so weekly (not daily).
-# gh-aw scatters the run to a repo-stable time and auto-adds workflow_dispatch.
-on: weekly on monday
+emoji: "⏪"
+name: "Pydantic AI Regression Detector"
+description: "Detect behavioral regressions between the two most recent releases and file a reproducible report. Runs on the Pydantic AI harness engine; the prompt is iterable from a Logfire managed variable."
+# Fuzzy weekly schedule (gh-aw scatters the time, auto-adds workflow_dispatch).
+# Weekly: regressions are assessed per release cadence, not daily.
+on: weekly on wednesday
 permissions:
   contents: read
   issues: read
   pull-requests: read
 # Full git history: the agent's repo checkout is shallow by default, so
 # `git log --since=...` would see only the tip commit. fetch-depth: 0 gives
-# the agent the real commit history it needs to detect documentation drift.
+# the agent the real commit history it needs to find recent changes.
 checkout:
   fetch-depth: 0
 concurrency:
-  group: ${{ github.workflow }}-docs-drift
+  group: ${{ github.workflow }}-regression-detector
   cancel-in-progress: true
 network:
   allowed:
@@ -31,10 +31,11 @@ network:
 # gh-aw runs its full Claude proxy + credential-injection machinery for us.
 # ANTHROPIC_BASE_URL MUST be a compile-time literal (not a ${{ vars.* }}
 # expression): gh-aw derives the api-proxy target host AND the
-# `--anthropic-api-base-path` from its parsed URL path at compile time. Only
-# ANTHROPIC_API_KEY stays a secret (injected by the AWF api-proxy, excluded
-# from the agent container). MiniMax exposes an Anthropic-compatible API at
-# https://api.minimax.io/anthropic.
+# `--anthropic-api-base-path` from its parsed URL path at compile time. With a
+# vars expression the path can't be parsed, so the proxy drops the `/anthropic`
+# prefix and the upstream returns 404. Only ANTHROPIC_API_KEY stays a secret
+# (injected by the AWF api-proxy, excluded from the agent container). MiniMax
+# exposes an Anthropic-compatible API at https://api.minimax.io/anthropic.
 runtimes:
   uv: {}
 engine:
@@ -56,8 +57,8 @@ safe-outputs:
   noop:
   create-issue:
     max: 1
-    title-prefix: "[docs-drift] "
-    close-older-key: "[docs-drift]"
+    title-prefix: "[regression-detector] "
+    close-older-key: "[regression-detector]"
     close-older-issues: false
     expires: 7d
 timeout-minutes: 90
@@ -156,14 +157,14 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/actions/fetch-dynamic-prompt
-            .github/workflows/shared/prompts/pydantic-ai-docs-drift.md
+            .github/workflows/shared/prompts/pydantic-ai-regression-detector.md
           sparse-checkout-cone-mode: false
       - name: Resolve agent prompt (Logfire managed variable, else committed default)
         id: resolve
         uses: ./.github/actions/fetch-dynamic-prompt
         with:
-          logfire-variable-key: gh_aw_pydantic_ai_docs_drift_prompt
-          default-prompt-file: .github/workflows/shared/prompts/pydantic-ai-docs-drift.md
+          logfire-variable-key: gh_aw_pydantic_ai_regression_detector_prompt
+          default-prompt-file: .github/workflows/shared/prompts/pydantic-ai-regression-detector.md
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---

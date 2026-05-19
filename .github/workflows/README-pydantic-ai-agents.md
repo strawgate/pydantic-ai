@@ -16,6 +16,11 @@ targeting this repo (Python `uv` workspace).
 | --- | --- | --- |
 | `pydantic-ai-bug-hunter.md` | daily + manual | files a `[bug-hunter]` issue (or noop) |
 | `pydantic-ai-docs-drift.md` | weekly + manual | files a `[docs-drift]` issue (or noop) |
+| `pydantic-ai-provider-mapping-sweep.md` | daily + manual | files a `[provider-mapping-sweep]` issue (or noop) — rotates one provider/run |
+| `pydantic-ai-roundtrip-sweep.md` | daily + manual | files a `[roundtrip-sweep]` issue (or noop) — serialize/deserialize state loss |
+| `pydantic-ai-regression-detector.md` | weekly + manual | files a `[regression-detector]` issue (or noop) — old-passes/new-fails |
+| `pydantic-ai-provider-parity-explore.md` | weekly + manual | files a `[provider-parity-explore]` issue (or noop) — rotates one capability/run |
+| `pydantic-ai-streaming-resilience-sweep.md` | weekly + manual | files a `[streaming-resilience-sweep]` issue (or noop) |
 | `pydantic-ai-pr-selftest.md` | PR touching the harness | comments harness health on the PR |
 
 Each `.md` is the source of truth; the adjacent `.lock.yml` is the compiled
@@ -52,12 +57,22 @@ targeting key `gh-aw-<owner>/<repo>`:
 
 - `gh_aw_pydantic_ai_bug_hunter_prompt`
 - `gh_aw_pydantic_ai_docs_drift_prompt`
+- `gh_aw_pydantic_ai_provider_mapping_sweep_prompt`
+- `gh_aw_pydantic_ai_roundtrip_sweep_prompt`
+- `gh_aw_pydantic_ai_regression_detector_prompt`
+- `gh_aw_pydantic_ai_provider_parity_explore_prompt`
+- `gh_aw_pydantic_ai_streaming_resilience_sweep_prompt`
 
 Seed each one with the corresponding committed default, which is the complete
 canonical prompt:
 
 - `.github/workflows/shared/prompts/pydantic-ai-bug-hunter.md`
 - `.github/workflows/shared/prompts/pydantic-ai-docs-drift.md`
+- `.github/workflows/shared/prompts/pydantic-ai-provider-mapping-sweep.md`
+- `.github/workflows/shared/prompts/pydantic-ai-roundtrip-sweep.md`
+- `.github/workflows/shared/prompts/pydantic-ai-regression-detector.md`
+- `.github/workflows/shared/prompts/pydantic-ai-provider-parity-explore.md`
+- `.github/workflows/shared/prompts/pydantic-ai-streaming-resilience-sweep.md`
 
 (Paste the file content below its leading HTML comment.) Whatever the variable
 holds **replaces** the prompt wholesale at run time — iterate freely in the
@@ -74,7 +89,12 @@ After editing any `.md`, recompile the lockfiles with the `gh aw` CLI:
 gh extension install githubnext/gh-aw   # or build from source
 GHAW_SHA=27f07dd9efd43d19f8b0f6928285d4efd97c3b12  # pin matching the compiler
 gh aw compile --actions-repo github/gh-aw --action-tag "$GHAW_SHA" \
-  pydantic-ai-bug-hunter pydantic-ai-docs-drift pydantic-ai-pr-selftest
+  pydantic-ai-bug-hunter pydantic-ai-docs-drift pydantic-ai-pr-selftest \
+  pydantic-ai-provider-mapping-sweep pydantic-ai-roundtrip-sweep \
+  pydantic-ai-regression-detector pydantic-ai-provider-parity-explore \
+  pydantic-ai-streaming-resilience-sweep
+# Then discard gh-aw's reformat of .github/dependabot.yml (it drops `version: 2`):
+git checkout -- .github/dependabot.yml
 ```
 
 `--action-tag` (a pinned `github/gh-aw` commit SHA) makes the lockfiles

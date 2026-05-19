@@ -135,7 +135,19 @@ def test_plan_mode_and_allowlist_compose():
 
 def test_native_tools_registry_uses_claude_names():
     assert tuple(har.NATIVE_TOOLS) == har.NATIVE_TOOL_NAMES
-    assert har.NATIVE_TOOL_NAMES == ("Bash", "Read", "Write", "Edit", "Grep", "Glob", "LS")
+    assert har.NATIVE_TOOL_NAMES == (
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Grep",
+        "Glob",
+        "LS",
+        "WebFetch",
+        "TodoWrite",
+        "ExitPlanMode",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -180,6 +192,77 @@ def test_native_glob_tool(tmp_path):
     (tmp_path / "x" / "b.txt").write_text("", encoding="utf-8")
     res = har.glob_search("**/*.py", str(tmp_path))
     assert "x/a.py" in res and "b.txt" not in res
+
+
+def test_glob_outside_base_is_handled(tmp_path):
+    # An absolute pattern resolves outside `base`; must not raise (ValueError
+    # from relative_to is caught and reported).
+    out = har.glob_search("/etc/*", str(tmp_path))
+    assert out.startswith("error:") or out == "(no matches)"
+
+
+def test_multi_edit_atomic(tmp_path):
+    f = tmp_path / "m.txt"
+    f.write_text("one two three", encoding="utf-8")
+    ok = har.multi_edit(str(f), [{"old_string": "one", "new_string": "1"},
+                                 {"old_string": "three", "new_string": "3"}])
+    assert "applied 2 edit(s)" in ok
+    assert f.read_text(encoding="utf-8") == "1 two 3"
+    # A failing edit writes nothing (atomic).
+    res = har.multi_edit(str(f), [{"old_string": "1", "new_string": "X"},
+                                  {"old_string": "absent", "new_string": "Y"}])
+    assert "edit #2" in res and "not found" in res
+    assert f.read_text(encoding="utf-8") == "1 two 3"
+
+
+def test_multi_edit_replace_all(tmp_path):
+    f = tmp_path / "r.txt"
+    f.write_text("a a a", encoding="utf-8")
+    har.multi_edit(str(f), [{"old_string": "a", "new_string": "b", "replace_all": True}])
+    assert f.read_text(encoding="utf-8") == "b b b"
+
+
+def test_web_fetch_rejects_non_http():
+    assert har.web_fetch("ftp://x/y").startswith("error:")
+    assert har.web_fetch("file:///etc/passwd").startswith("error:")
+
+
+def test_web_fetch_strips_html(monkeypatch):
+    monkeypatch.setattr(
+        har, "_http_get",
+        lambda url, timeout=20.0: (200, "<html><body>Hi <b>there</b><script>x()</script></body></html>"),
+    )
+    out = har.web_fetch("https://example.test", prompt="get the greeting")
+    assert "HTTP 200 for https://example.test" in out
+    assert "Extraction request: get the greeting" in out
+    assert "Hi there" in out and "<b>" not in out and "x()" not in out
+
+
+def test_web_fetch_network_error_is_tool_result(monkeypatch):
+    def boom(url, timeout=20.0):
+        raise RuntimeError("blocked by firewall")
+
+    monkeypatch.setattr(har, "_http_get", boom)
+    out = har.web_fetch("https://blocked.test")
+    assert out == "error: fetch failed: blocked by firewall"
+
+
+def test_todo_write_acknowledges():
+    out = har.todo_write(
+        [{"content": "do x", "status": "in_progress", "activeForm": "doing x"}]
+    )
+    assert "do x" in out and out.startswith("todo list")
+    assert har.todo_write([]) == "todo list cleared"
+
+
+def test_exit_plan_mode_returns_ack():
+    assert "proceeding" in har.exit_plan_mode("step 1; step 2").lower()
+
+
+def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
+    names = {t.name for t in har.select_native_tools(None, "plan")}
+    assert "MultiEdit" not in names  # mutating
+    assert {"WebFetch", "TodoWrite", "ExitPlanMode"} <= names  # non-mutating
 
 
 # --------------------------------------------------------------------------- #

@@ -44,6 +44,10 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+# pydantic requires typing_extensions.TypedDict (not typing.TypedDict) for
+# schema generation on Python < 3.12; typing_extensions ships with pydantic.
+from typing_extensions import NotRequired, TypedDict
+
 import logfire
 from anthropic import AsyncAnthropic
 from pydantic_ai import Agent, RunContext, Tool
@@ -62,9 +66,21 @@ PROXY_PLACEHOLDER = "gh-aw-proxy-injected"
 # Claude Code native tools the harness implements. The model is trained on
 # these exact names/parameters, so matching them (rather than a custom set +
 # a fragile rename map) makes the harness a faithful drop-in.
-NATIVE_TOOL_NAMES = ("Bash", "Read", "Write", "Edit", "Grep", "Glob", "LS")
+NATIVE_TOOL_NAMES = (
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Grep",
+    "Glob",
+    "LS",
+    "WebFetch",
+    "TodoWrite",
+    "ExitPlanMode",
+)
 # Tools that mutate the workspace — withheld in `plan` permission mode.
-MUTATING_TOOLS = frozenset({"Bash", "Write", "Edit"})
+MUTATING_TOOLS = frozenset({"Bash", "Write", "Edit", "MultiEdit"})
 
 
 def log(msg: str) -> None:
@@ -389,7 +405,8 @@ def glob_search(pattern: str, path: str = ".") -> str:
             str(pathlib.Path(m).relative_to(base))
             for m in globlib.glob(str(base / pattern), recursive=True)
         )
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError: a match resolved outside `base` (e.g. an absolute pattern).
         return f"error: {exc}"
     return _clip("\n".join(matches) or "(no matches)")
 
@@ -429,6 +446,106 @@ def grep(pattern: str, path: str = ".") -> str:
     return _clip("\n".join(out) or "(no matches)")
 
 
+class EditOp(TypedDict):
+    """One replacement for `MultiEdit` (Claude's edit schema)."""
+
+    old_string: str
+    new_string: str
+    replace_all: NotRequired[bool]
+
+
+class TodoItem(TypedDict):
+    """One entry for `TodoWrite` (Claude's todo schema)."""
+
+    content: str
+    status: str
+    activeForm: str
+
+
+def multi_edit(file_path: str, edits: list[EditOp]) -> str:
+    """Apply a sequence of string replacements to one workspace file atomically.
+
+    Each edit replaces the first occurrence of `old_string` (or every
+    occurrence when `replace_all`). If any `old_string` is missing, nothing is
+    written — the file is left untouched.
+    """
+    try:
+        p = _resolve(file_path)
+        text = original = p.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"error: {exc}"
+    for i, e in enumerate(edits):
+        old = e.get("old_string", "")
+        if not old or old not in text:
+            return f"error: edit #{i + 1} `old_string` not found (no changes written)"
+        text = text.replace(old, e.get("new_string", ""), -1 if e.get("replace_all") else 1)
+    if text == original:
+        return "no changes"
+    try:
+        p.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        return f"error: {exc}"
+    return f"applied {len(edits)} edit(s) to {p}"
+
+
+def _http_get(url: str, timeout: float = 20.0) -> tuple[int, str]:
+    """Single HTTP GET, isolated so tests can stub the network."""
+    import httpx
+
+    r = httpx.get(
+        url,
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": "pydantic-ai-harness"},
+    )
+    return r.status_code, r.text
+
+
+_HTML_TAG_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>|<[^>]+>")
+
+
+def web_fetch(url: str, prompt: str | None = None) -> str:
+    """Fetch a URL and return its content as text (HTML reduced to text).
+
+    Mirrors Claude's WebFetch signature. `prompt` is the model's extraction
+    instruction; it is echoed back so the driving model applies its own
+    reasoning to the returned content. Subject to the AWF network firewall.
+    """
+    if not url.startswith(("http://", "https://")):
+        return "error: url must be http(s)"
+    try:
+        status, body = _http_get(url)
+    except Exception as exc:  # noqa: BLE001 - network/DNS/firewall/import -> tool result
+        return f"error: fetch failed: {exc}"
+    text = _HTML_TAG_RE.sub(" ", body)
+    text = re.sub(r"[ \t]{2,}", " ", re.sub(r"\s+\n", "\n", text)).strip()
+    header = f"HTTP {status} for {url}"
+    if prompt:
+        header += f"\nExtraction request: {prompt}"
+    return _clip(f"{header}\n\n{text}")
+
+
+def todo_write(todos: list[TodoItem]) -> str:
+    """Record the agent's task checklist.
+
+    The harness runs autonomously with no interactive UI, so this is a
+    stateless tracker: it acknowledges the list (keeping the Claude-trained
+    model on its planning rails) without external side effects.
+    """
+    if not todos:
+        return "todo list cleared"
+    marks = {"completed": "x", "in_progress": "~"}
+    lines = [f"[{marks.get(str(t.get('status', '')), ' ')}] {t.get('content', '')}" for t in todos]
+    return "todo list:\n" + "\n".join(lines)
+
+
+def exit_plan_mode(plan: str) -> str:
+    """Acknowledge the end of planning. The harness has no interactive plan
+    gate, so it records the plan and lets the agent proceed."""
+    log(f"ExitPlanMode: {plan[:200]}")
+    return "Plan acknowledged — proceeding with execution."
+
+
 # Claude tool name -> (callable, one-line description). The function names stay
 # idiomatic snake_case; `pydantic_ai.Tool` exposes them under the Claude names.
 NATIVE_TOOLS: dict[str, tuple[Callable[..., str], str]] = {
@@ -436,9 +553,13 @@ NATIVE_TOOLS: dict[str, tuple[Callable[..., str], str]] = {
     "Read": (read_file, "Read a UTF-8 text file (optional line offset/limit)."),
     "Write": (write_file, "Create or overwrite a workspace text file."),
     "Edit": (edit_file, "Replace a string in a workspace file."),
+    "MultiEdit": (multi_edit, "Apply multiple string replacements to one file atomically."),
     "Grep": (grep, "Recursively regex-search workspace files."),
     "Glob": (glob_search, "List workspace paths matching a glob pattern."),
     "LS": (list_dir, "List a workspace directory's entries."),
+    "WebFetch": (web_fetch, "Fetch a URL and return its text content."),
+    "TodoWrite": (todo_write, "Record the agent's task checklist."),
+    "ExitPlanMode": (exit_plan_mode, "Signal the end of planning and proceed."),
 }
 
 

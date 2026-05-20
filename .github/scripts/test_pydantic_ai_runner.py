@@ -423,6 +423,36 @@ def test_read_file_prepends_context(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 # history compaction (ProcessHistory capability)
 # --------------------------------------------------------------------------- #
+def test_compaction_trigger_chars_resolution(monkeypatch):
+    for v in (
+        "GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS",
+        "GH_AW_HARNESS_MODEL_CONTEXT_CHARS",
+        "GH_AW_HARNESS_COMPACTION_FRACTION",
+    ):
+        monkeypatch.delenv(v, raising=False)
+    # Default: 800k * 0.7 = 560k chars (≈ 70% of a 200k-token context).
+    assert har._compaction_trigger_chars() == 560_000
+    assert har.DEFAULT_COMPACTION_TRIGGER_CHARS == 560_000
+
+    # Component overrides compose.
+    monkeypatch.setenv("GH_AW_HARNESS_MODEL_CONTEXT_CHARS", "400000")
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_FRACTION", "0.5")
+    assert har._compaction_trigger_chars() == 200_000
+
+    # Direct trigger wins over derivation, even when components are also set.
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", "12345")
+    assert har._compaction_trigger_chars() == 12345
+
+    # Bad fraction values fall back to default.
+    monkeypatch.delenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS")
+    monkeypatch.delenv("GH_AW_HARNESS_MODEL_CONTEXT_CHARS")
+    for bad in ("0", "-1", "1.5", "abc", ""):
+        monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_FRACTION", bad)
+        assert har._compaction_trigger_chars() == int(
+            har.DEFAULT_MODEL_CONTEXT_CHARS * har.DEFAULT_COMPACTION_FRACTION
+        )
+
+
 def test_history_size_chars_sums_all_part_content():
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 

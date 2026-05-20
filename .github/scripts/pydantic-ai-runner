@@ -87,15 +87,7 @@ INSTRUCTIONS = (
 
 def _request_limit() -> int:
     """Per-run model-request cap (GH_AW_HARNESS_REQUEST_LIMIT, else default)."""
-    raw = os.environ.get("GH_AW_HARNESS_REQUEST_LIMIT")
-    if raw:
-        try:
-            value = int(raw)
-            if value > 0:
-                return value
-        except ValueError:
-            pass
-    return DEFAULT_REQUEST_LIMIT
+    return _int_env("GH_AW_HARNESS_REQUEST_LIMIT", DEFAULT_REQUEST_LIMIT)
 
 # Claude Code native tools the harness implements. The model is trained on
 # these exact names/parameters, so matching them (rather than a custom set +
@@ -127,15 +119,7 @@ DEFAULT_SUBAGENT_REQUEST_LIMIT = 30
 
 def _subagent_request_limit() -> int:
     """Per-`Task` sub-agent request cap, env-overridable."""
-    raw = os.environ.get("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT")
-    if raw:
-        try:
-            value = int(raw)
-            if value > 0:
-                return value
-        except ValueError:
-            pass
-    return DEFAULT_SUBAGENT_REQUEST_LIMIT
+    return _int_env("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", DEFAULT_SUBAGENT_REQUEST_LIMIT)
 
 
 SUBAGENT_INSTRUCTIONS = (
@@ -152,13 +136,20 @@ SUBAGENT_INSTRUCTIONS = (
 # message histories. Summarise older turns via the run's model and keep the
 # tail verbatim, so context stays bounded.
 # --------------------------------------------------------------------------- #
-# Character budget for the history before we compact. ~3-4 chars per token, so
-# 80_000 chars ≈ 20-25k tokens — comfortable for any modern context window
-# while keeping cost predictable. Compaction triggers on TOTAL content size,
-# not message count: a few huge messages eat context just as fast as many
-# small ones, and message-count doesn't capture that.
-DEFAULT_COMPACTION_TRIGGER_CHARS = 80_000
+# Compaction triggers on TOTAL content size, not message count: a few huge
+# messages eat context just as fast as many small ones, and message-count
+# doesn't capture that. The default is derived from the configured model's
+# approximate context window (~4 chars/token) and a target headroom fraction
+# — both individually env-overridable. Set GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS
+# directly to bypass the derivation entirely.
+DEFAULT_MODEL_CONTEXT_CHARS = 800_000  # ≈ 200k-token window at ~4 chars/token
+DEFAULT_COMPACTION_FRACTION = 0.7      # compact when used context reaches 70%
+DEFAULT_COMPACTION_TRIGGER_CHARS = int(DEFAULT_MODEL_CONTEXT_CHARS * DEFAULT_COMPACTION_FRACTION)
 DEFAULT_COMPACTION_KEEP_RECENT = 10
+# Cap on how much of the older transcript the summariser sees in one call —
+# the model rarely needs more, and bigger inputs run slower without improving
+# the summary.
+COMPACTION_TRANSCRIPT_MAX_CHARS = 60_000
 COMPACTION_SUMMARY_INSTRUCTIONS = (
     "You compact agent transcripts. Summarise the conversation so far into "
     "a tight, factual brief the parent agent can resume from: list the goal, "
@@ -178,6 +169,42 @@ def _int_env(name: str, default: int) -> int:
         except ValueError:
             pass
     return default
+
+
+def _float_env(name: str, default: float, *, max_value: float | None = None) -> float:
+    raw = os.environ.get(name)
+    if raw:
+        try:
+            value = float(raw)
+            if value > 0 and (max_value is None or value <= max_value):
+                return value
+        except ValueError:
+            pass
+    return default
+
+
+def _compaction_trigger_chars() -> int:
+    """Resolve the compaction trigger.
+
+    Precedence:
+    1. An explicit `GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS` (absolute char budget).
+    2. Otherwise `MODEL_CONTEXT_CHARS * COMPACTION_FRACTION`, each individually
+       overridable via `GH_AW_HARNESS_MODEL_CONTEXT_CHARS` and
+       `GH_AW_HARNESS_COMPACTION_FRACTION` (0 < f <= 1).
+    """
+    direct = os.environ.get("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS")
+    if direct:
+        try:
+            v = int(direct)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    context = _int_env("GH_AW_HARNESS_MODEL_CONTEXT_CHARS", DEFAULT_MODEL_CONTEXT_CHARS)
+    fraction = _float_env(
+        "GH_AW_HARNESS_COMPACTION_FRACTION", DEFAULT_COMPACTION_FRACTION, max_value=1.0
+    )
+    return int(context * fraction)
 
 
 def _render_messages_for_summary(messages: list[ModelMessage]) -> str:
@@ -210,9 +237,7 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     size exceeds the budget; keep the first message (system + task prompt)
     and the most recent `KEEP_RECENT` messages verbatim. Falls back to plain
     truncation when the summarisation sub-call fails (network/model)."""
-    trigger_chars = _int_env(
-        "GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", DEFAULT_COMPACTION_TRIGGER_CHARS
-    )
+    trigger_chars = _compaction_trigger_chars()
     keep = _int_env("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", DEFAULT_COMPACTION_KEEP_RECENT)
     size = _history_size_chars(messages)
     if size < trigger_chars or len(messages) <= keep + 1:
@@ -230,7 +255,7 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         # Share the parent's RunUsage so the compaction summarisation also
         # counts towards the run's reported token/request totals.
         r = await summariser.run(
-            f"Compact this transcript:\n\n{transcript[:60000]}",
+            f"Compact this transcript:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}",
             usage_limits=UsageLimits(request_limit=2),
             usage=ctx.usage,
         )

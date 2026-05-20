@@ -48,7 +48,7 @@ engine:
   command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
   env:
     ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
     GH_AW_HARNESS_MODEL: ${{ vars.MODEL }}
 tools:
   github:

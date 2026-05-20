@@ -39,8 +39,10 @@ on-demand sweep without waiting for the crons.
 
 Repository **secrets**:
 
-- `ANTHROPIC_API_KEY` — key for the MiniMax Anthropic-compatible endpoint
-  (`https://api.minimax.io/anthropic`); injected by gh-aw's AWF proxy.
+- `MINIMAX_API_KEY` — key for the MiniMax Anthropic-compatible endpoint
+  (`https://api.minimax.io/anthropic`); the workflows wire it to the agent
+  as the `ANTHROPIC_API_KEY` env var (Claude Code CLI convention) and the
+  AWF proxy injects it transparently.
 - `LOGFIRE_WRITE_TOKEN` — Logfire project write token for OTLP trace export.
 - `LOGFIRE_READ_EXTERNAL_VARIABLES` — *optional*; enables runtime prompt
   overrides. If unset, workflows run on the baked-in static prompts.

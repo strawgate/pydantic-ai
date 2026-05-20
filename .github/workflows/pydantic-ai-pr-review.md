@@ -6,6 +6,10 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
   workflow_dispatch:
+  # Fork-PR safety: only trigger when the actor has admin/maintainer/write
+  # access. Without this, any established external contributor's PR would
+  # consume the configured Anthropic key and a model run.
+  roles: [admin, maintainer, write]
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the

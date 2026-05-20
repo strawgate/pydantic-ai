@@ -359,6 +359,139 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     assert seen["request_limit"] == har.DEFAULT_SUBAGENT_REQUEST_LIMIT
 
 
+# --------------------------------------------------------------------------- #
+# directory-scoped AGENTS.md / CLAUDE.md auto-loading
+# --------------------------------------------------------------------------- #
+def test_attach_context_surfaces_files_once_per_run(monkeypatch, tmp_path):
+    # AGENTS.md at root of the "workspace" + CLAUDE.md in a subdir.
+    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    (tmp_path / "AGENTS.md").write_text("# repo conventions", encoding="utf-8")
+    sub = tmp_path / "pkg"
+    sub.mkdir()
+    (sub / "CLAUDE.md").write_text("# pkg conventions", encoding="utf-8")
+    (sub / "code.py").write_text("x = 1\n", encoding="utf-8")
+    har._reset_context_state()
+
+    first = har._attach_context("pkg/code.py")
+    assert "context: pkg/CLAUDE.md" in first  # nearest first when walking up
+    assert "context: AGENTS.md" in first
+    assert "pkg conventions" in first and "repo conventions" in first
+
+    # Subsequent calls in same run dedupe.
+    again = har._attach_context("pkg/code.py")
+    assert again == ""
+
+    # A different path under the same dir hits no new context files.
+    (sub / "other.py").write_text("", encoding="utf-8")
+    assert har._attach_context("pkg/other.py") == ""
+
+
+def test_attach_context_truncates_large_files(monkeypatch, tmp_path):
+    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    big = "X" * (har.MAX_CONTEXT_FILE_CHARS + 5000)
+    (tmp_path / "AGENTS.md").write_text(big, encoding="utf-8")
+    har._reset_context_state()
+    out = har._attach_context(".")
+    # Body of the AGENTS.md block is capped to MAX_CONTEXT_FILE_CHARS.
+    body = out.split("---\n", 2)[-1]
+    assert len(body) <= har.MAX_CONTEXT_FILE_CHARS + 50  # +slack for trailing markers
+
+
+def test_attach_context_empty_for_missing_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    har._reset_context_state()
+    assert har._attach_context(None) == ""
+    assert har._attach_context("does-not-exist.py") == ""  # parent has no AGENTS.md/CLAUDE.md
+
+
+def test_read_file_prepends_context(monkeypatch, tmp_path):
+    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    (tmp_path / "AGENTS.md").write_text("repo rules", encoding="utf-8")
+    (tmp_path / "f.txt").write_text("file body", encoding="utf-8")
+    har._reset_context_state()
+    out = har.read_file("f.txt")
+    assert "context: AGENTS.md" in out and "repo rules" in out and "file body" in out
+
+
+# --------------------------------------------------------------------------- #
+# history compaction (ProcessHistory capability)
+# --------------------------------------------------------------------------- #
+def test_compact_history_no_op_below_threshold(monkeypatch):
+    import asyncio
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i}")]) for i in range(5)]
+
+    class _Ctx:
+        model = None
+
+    out = asyncio.run(har._compact_history(_Ctx(), msgs))
+    assert out is msgs  # untouched
+
+
+def test_compact_history_summarises_via_run_model(monkeypatch):
+    import asyncio
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models.test import TestModel
+
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER", "10")
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", "3")
+
+    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i}")]) for i in range(12)]
+
+    class _FakeAgent:
+        def __init__(self, model, instructions=None):  # type: ignore[no-untyped-def]
+            self.model = model
+
+        async def run(self, prompt, usage_limits=None):  # type: ignore[no-untyped-def]
+            class _R:
+                output = "SHORT SUMMARY"
+
+            return _R()
+
+    monkeypatch.setattr(har, "Agent", _FakeAgent)
+
+    class _Ctx:
+        model = TestModel()
+
+    out = asyncio.run(har._compact_history(_Ctx(), msgs))
+    # head (1) + synthetic summary (1) + last KEEP_RECENT (3) = 5
+    assert len(out) == 5
+    # Summary present in the middle synthetic ModelRequest.
+    summary_msg = out[1]
+    assert any("SHORT SUMMARY" in getattr(p, "content", "") for p in summary_msg.parts)
+
+
+def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
+    import asyncio
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models.test import TestModel
+
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER", "10")
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", "3")
+
+    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i}")]) for i in range(12)]
+
+    class _FailingAgent:
+        def __init__(self, *a, **k):  # type: ignore[no-untyped-def]
+            pass
+
+        async def run(self, *a, **k):  # type: ignore[no-untyped-def]
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(har, "Agent", _FailingAgent)
+
+    class _Ctx:
+        model = TestModel()
+
+    out = asyncio.run(har._compact_history(_Ctx(), msgs))
+    # On failure: keep head + tail (no synthetic summary) = 1 + 3 = 4
+    assert len(out) == 4
+
+
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
     import asyncio
 

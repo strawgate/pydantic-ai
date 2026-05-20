@@ -51,8 +51,9 @@ from typing_extensions import NotRequired, TypedDict
 import logfire
 from anthropic import AsyncAnthropic
 from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -143,6 +144,131 @@ SUBAGENT_INSTRUCTIONS = (
     "shell out. Investigate the task you were given and return a concise, "
     "evidence-grounded answer to your caller — do not try to act on it."
 )
+
+
+# --------------------------------------------------------------------------- #
+# History compaction (pydantic-ai ProcessHistory capability)
+# Long-running agents (deep sweeps, large-diff PR reviews) accumulate huge
+# message histories. Summarise older turns via the run's model and keep the
+# tail verbatim, so context stays bounded.
+# --------------------------------------------------------------------------- #
+DEFAULT_COMPACTION_TRIGGER_MESSAGES = 30
+DEFAULT_COMPACTION_KEEP_RECENT = 10
+COMPACTION_SUMMARY_INSTRUCTIONS = (
+    "You compact agent transcripts. Summarise the conversation so far into "
+    "a tight, factual brief the parent agent can resume from: list the goal, "
+    "the key findings, the files/lines already inspected, any decisions made, "
+    "and the immediate next step. Preserve specifics (paths, identifiers, "
+    "evidence) over prose. No flattery, no meta-commentary."
+)
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return default
+
+
+def _render_messages_for_summary(messages: list[ModelMessage]) -> str:
+    """Render a slice of pydantic-ai messages into a compact transcript."""
+    out: list[str] = []
+    for m in messages:
+        kind = "user" if isinstance(m, ModelRequest) else "assistant"
+        for part in getattr(m, "parts", []):
+            text = getattr(part, "content", None) or getattr(part, "tool_name", None) or ""
+            out.append(f"[{kind}/{type(part).__name__}] {str(text)[:1500]}")
+    return "\n".join(out)
+
+
+async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Capability: summarise older turns once the history grows past a
+    threshold; keep the first message (system+task prompt) and the most
+    recent `KEEP_RECENT` messages verbatim. Falls back to truncation when
+    the summarisation sub-call fails (network/model)."""
+    trigger = _int_env("GH_AW_HARNESS_COMPACTION_TRIGGER", DEFAULT_COMPACTION_TRIGGER_MESSAGES)
+    keep = _int_env("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", DEFAULT_COMPACTION_KEEP_RECENT)
+    if len(messages) < trigger or len(messages) <= keep + 1:
+        return messages
+    head = messages[:1]
+    middle = messages[1:-keep]
+    tail = messages[-keep:]
+    transcript = _render_messages_for_summary(middle)
+    log(f"compacting history: {len(messages)} -> {len(head) + 1 + len(tail)} (summarising {len(middle)} mid-msgs)")
+    try:
+        summariser = Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS)
+        r = await summariser.run(
+            f"Compact this transcript:\n\n{transcript[:60000]}",
+            usage_limits=UsageLimits(request_limit=2),
+        )
+        summary = str(r.output or "").strip() or "(empty summary)"
+    except Exception as exc:  # noqa: BLE001 - never let compaction fail the run
+        log(f"compaction summarisation failed ({exc!r}); truncating instead")
+        return head + tail
+    synthetic = ModelRequest(parts=[UserPromptPart(content=f"[compacted history]\n{summary}")])
+    return head + [synthetic] + tail
+
+
+# --------------------------------------------------------------------------- #
+# Directory-scoped AGENTS.md / CLAUDE.md auto-loading
+# When the agent touches a file, the harness transparently surfaces the
+# directory's `AGENTS.md` / `CLAUDE.md` the first time it's relevant (walking
+# up to the workspace root). Per-run state ensures each file is shown at most
+# once. Shared across the parent agent and any read-only `Task` sub-agents.
+# --------------------------------------------------------------------------- #
+CONTEXT_FILE_NAMES = ("AGENTS.md", "CLAUDE.md")
+MAX_CONTEXT_FILE_CHARS = 8000
+_seen_context_files: set[pathlib.Path] = set()
+
+
+def _reset_context_state() -> None:
+    """Clear per-run state. Called once at the start of each `run()`."""
+    _seen_context_files.clear()
+
+
+def _attach_context(path_arg: str | None) -> str:
+    """Return any newly-discovered `AGENTS.md` / `CLAUDE.md` blocks to prepend
+    to a path-taking tool result. Walks up from the target's directory to the
+    workspace root, surfacing each file at most once per run."""
+    if not path_arg:
+        return ""
+    try:
+        workspace = pathlib.Path(WORKSPACE).resolve()
+        target = _resolve(path_arg).resolve()
+    except OSError:
+        return ""
+    cur = target if target.is_dir() else target.parent
+    blocks: list[str] = []
+    while True:
+        for name in CONTEXT_FILE_NAMES:
+            candidate = cur / name
+            if not candidate.is_file() or candidate in _seen_context_files:
+                continue
+            _seen_context_files.add(candidate)
+            try:
+                content = candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            rel = (
+                candidate.relative_to(workspace)
+                if candidate.is_relative_to(workspace)
+                else candidate
+            )
+            blocks.append(
+                f"--- context: {rel} (auto-loaded; shown once per run) ---\n"
+                f"{content[:MAX_CONTEXT_FILE_CHARS]}\n"
+            )
+        if cur == workspace or cur.parent == cur or not cur.is_relative_to(workspace):
+            break
+        cur = cur.parent
+    if not blocks:
+        return ""
+    return "\n".join(blocks) + "\n"
 
 
 def log(msg: str) -> None:
@@ -412,12 +538,13 @@ def read_file(file_path: str, offset: int | None = None, limit: int | None = Non
         text = _resolve(file_path).read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return f"error: {exc}"
+    ctx_prefix = _attach_context(file_path)
     if offset is None and limit is None:
-        return _clip(text)
+        return _clip(ctx_prefix + text)
     lines = text.splitlines()
     start = max((offset or 1) - 1, 0)
     end = start + limit if limit else len(lines)
-    return _clip("\n".join(lines[start:end]))
+    return _clip(ctx_prefix + "\n".join(lines[start:end]))
 
 
 def write_file(file_path: str, content: str) -> str:
@@ -426,7 +553,7 @@ def write_file(file_path: str, content: str) -> str:
         p = _resolve(file_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        return f"wrote {len(content)} chars to {p}"
+        return _attach_context(file_path) + f"wrote {len(content)} chars to {p}"
     except OSError as exc:
         return f"error: {exc}"
 
@@ -443,7 +570,7 @@ def edit_file(file_path: str, old_string: str, new_string: str, replace_all: boo
             return "error: `old_string` not found"
         edited = text.replace(old_string, new_string, -1 if replace_all else 1)
         p.write_text(edited, encoding="utf-8")
-        return f"edited {p}"
+        return _attach_context(file_path) + f"edited {p}"
     except OSError as exc:
         return f"error: {exc}"
 
@@ -452,10 +579,10 @@ def list_dir(path: str = ".") -> str:
     """List a workspace directory's entries (directories marked with `/`)."""
     try:
         p = _resolve(path)
-        return _clip(
-            "\n".join(sorted(e.name + ("/" if e.is_dir() else "") for e in p.iterdir()))
-            or "(empty)"
-        )
+        listing = "\n".join(
+            sorted(e.name + ("/" if e.is_dir() else "") for e in p.iterdir())
+        ) or "(empty)"
+        return _clip(_attach_context(path) + listing)
     except OSError as exc:
         return f"error: {exc}"
 
@@ -471,7 +598,7 @@ def glob_search(pattern: str, path: str = ".") -> str:
     except (OSError, ValueError) as exc:
         # ValueError: a match resolved outside `base` (e.g. an absolute pattern).
         return f"error: {exc}"
-    return _clip("\n".join(matches) or "(no matches)")
+    return _clip(_attach_context(path) + ("\n".join(matches) or "(no matches)"))
 
 
 def grep(pattern: str, path: str = ".") -> str:
@@ -487,7 +614,7 @@ def grep(pattern: str, path: str = ".") -> str:
                 text=True,
                 timeout=60,
             )
-            return _clip(r.stdout or "(no matches)")
+            return _clip(_attach_context(path) + (r.stdout or "(no matches)"))
         except subprocess.TimeoutExpired:
             return "error: grep timed out"
     try:
@@ -503,10 +630,10 @@ def grep(pattern: str, path: str = ".") -> str:
                 if rx.search(ln):
                     out.append(f"{f}:{i}:{ln}")
                     if len(out) >= 500:
-                        return _clip("\n".join(out))
+                        return _clip(_attach_context(path) + "\n".join(out))
         except OSError:
             continue
-    return _clip("\n".join(out) or "(no matches)")
+    return _clip(_attach_context(path) + ("\n".join(out) or "(no matches)"))
 
 
 class EditOp(TypedDict):
@@ -548,7 +675,7 @@ def multi_edit(file_path: str, edits: list[EditOp]) -> str:
         p.write_text(text, encoding="utf-8")
     except OSError as exc:
         return f"error: {exc}"
-    return f"applied {len(edits)} edit(s) to {p}"
+    return _attach_context(file_path) + f"applied {len(edits)} edit(s) to {p}"
 
 
 def _http_get(url: str, timeout: float = 20.0) -> tuple[int, str]:
@@ -822,11 +949,13 @@ async def run(
     mcp_servers: list[AbstractToolset[Any]],
     session_id: str,
 ) -> int:
+    _reset_context_state()  # per-run dedupe state for AGENTS.md/CLAUDE.md auto-loading
     agent = Agent(
         model,
         instructions=INSTRUCTIONS,
         tools=native_tools,
         toolsets=mcp_servers or None,
+        capabilities=[ProcessHistory(_compact_history)],
     )
     limits = UsageLimits(request_limit=_request_limit())
     emit({"type": "system", "subtype": "init", "session_id": session_id, "model": label})

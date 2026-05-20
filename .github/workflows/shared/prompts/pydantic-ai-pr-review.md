@@ -40,7 +40,7 @@ the GitHub API.**
 - `related-issues.txt` — linked issues referenced by the PR.
 - `changed-files.txt` — paths in this PR.
 - `agents-md.txt` — `AGENTS.md` excerpts for directories the PR touches.
-- `diffs/<path>.diff` — per-file diffs annotated with source line numbers.
+- `diff/<path>.diff` — per-file diffs annotated with source line numbers.
 
 The annotated diffs are the **source of truth** for what changed. Do not
 re-fetch them.
@@ -79,7 +79,7 @@ For every candidate finding, before posting an inline comment:
 4. **Check existing threads** in `review-comments.txt` — if the same issue
    was already raised (resolved or unresolved), do **not** duplicate.
 5. **Confirm the line is commentable** — open
-   `.github/.review-context/diffs/<file>.diff` and verify the target line is
+   `.github/.review-context/diff/<file>.diff` and verify the target line is
    numbered. Inline comments only land on lines present in the diff. If the
    line isn't numbered, put the finding in the review body instead.
 

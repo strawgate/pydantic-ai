@@ -152,7 +152,12 @@ SUBAGENT_INSTRUCTIONS = (
 # message histories. Summarise older turns via the run's model and keep the
 # tail verbatim, so context stays bounded.
 # --------------------------------------------------------------------------- #
-DEFAULT_COMPACTION_TRIGGER_MESSAGES = 30
+# Character budget for the history before we compact. ~3-4 chars per token, so
+# 80_000 chars ≈ 20-25k tokens — comfortable for any modern context window
+# while keeping cost predictable. Compaction triggers on TOTAL content size,
+# not message count: a few huge messages eat context just as fast as many
+# small ones, and message-count doesn't capture that.
+DEFAULT_COMPACTION_TRIGGER_CHARS = 80_000
 DEFAULT_COMPACTION_KEEP_RECENT = 10
 COMPACTION_SUMMARY_INSTRUCTIONS = (
     "You compact agent transcripts. Summarise the conversation so far into "
@@ -186,20 +191,40 @@ def _render_messages_for_summary(messages: list[ModelMessage]) -> str:
     return "\n".join(out)
 
 
+def _history_size_chars(messages: list[ModelMessage]) -> int:
+    """Rough char budget for a history (sum of every text-bearing part).
+
+    A cheap, model-free proxy for token cost (~3-4 chars per token). Used to
+    decide when to compact; precise tokenisation isn't worth the cost or the
+    per-provider tokenizer dependency."""
+    total = 0
+    for m in messages:
+        for part in getattr(m, "parts", []):
+            text = getattr(part, "content", None) or getattr(part, "tool_name", None) or ""
+            total += len(str(text))
+    return total
+
+
 async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Capability: summarise older turns once the history grows past a
-    threshold; keep the first message (system+task prompt) and the most
-    recent `KEEP_RECENT` messages verbatim. Falls back to truncation when
-    the summarisation sub-call fails (network/model)."""
-    trigger = _int_env("GH_AW_HARNESS_COMPACTION_TRIGGER", DEFAULT_COMPACTION_TRIGGER_MESSAGES)
+    """Capability: summarise older turns once the history's total character
+    size exceeds the budget; keep the first message (system + task prompt)
+    and the most recent `KEEP_RECENT` messages verbatim. Falls back to plain
+    truncation when the summarisation sub-call fails (network/model)."""
+    trigger_chars = _int_env(
+        "GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", DEFAULT_COMPACTION_TRIGGER_CHARS
+    )
     keep = _int_env("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", DEFAULT_COMPACTION_KEEP_RECENT)
-    if len(messages) < trigger or len(messages) <= keep + 1:
+    size = _history_size_chars(messages)
+    if size < trigger_chars or len(messages) <= keep + 1:
         return messages
     head = messages[:1]
     middle = messages[1:-keep]
     tail = messages[-keep:]
     transcript = _render_messages_for_summary(middle)
-    log(f"compacting history: {len(messages)} -> {len(head) + 1 + len(tail)} (summarising {len(middle)} mid-msgs)")
+    log(
+        f"compacting history: {size} chars / {len(messages)} msgs -> "
+        f"keeping head + summary + last {keep} (summarising {len(middle)} mid-msgs)"
+    )
     try:
         summariser = Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS)
         r = await summariser.run(

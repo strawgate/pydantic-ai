@@ -416,18 +416,29 @@ def test_read_file_prepends_context(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 # history compaction (ProcessHistory capability)
 # --------------------------------------------------------------------------- #
-def test_compact_history_no_op_below_threshold(monkeypatch):
+def test_history_size_chars_sums_all_part_content():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    msgs = [
+        ModelRequest(parts=[UserPromptPart(content="hello")]),  # 5
+        ModelRequest(parts=[UserPromptPart(content="x" * 20)]),  # 20
+    ]
+    assert har._history_size_chars(msgs) == 25
+
+
+def test_compact_history_no_op_below_char_budget(monkeypatch):
     import asyncio
 
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i}")]) for i in range(5)]
+    # Many tiny messages — total chars stays well below the default 80k budget.
+    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i}")]) for i in range(100)]
 
     class _Ctx:
         model = None
 
     out = asyncio.run(har._compact_history(_Ctx(), msgs))
-    assert out is msgs  # untouched
+    assert out is msgs  # size-based: count alone never triggers
 
 
 def test_compact_history_summarises_via_run_model(monkeypatch):
@@ -436,10 +447,13 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models.test import TestModel
 
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER", "10")
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", "1000")
     monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", "3")
 
-    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i}")]) for i in range(12)]
+    # 12 messages of ~120 chars each ≈ 1.4k chars — exceeds the 1000-char trigger.
+    msgs = [
+        ModelRequest(parts=[UserPromptPart(content=f"m{i} " + "x" * 120)]) for i in range(12)
+    ]
 
     class _FakeAgent:
         def __init__(self, model, instructions=None):  # type: ignore[no-untyped-def]
@@ -470,10 +484,12 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models.test import TestModel
 
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER", "10")
+    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", "1000")
     monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", "3")
 
-    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i}")]) for i in range(12)]
+    msgs = [
+        ModelRequest(parts=[UserPromptPart(content=f"m{i} " + "x" * 120)]) for i in range(12)
+    ]
 
     class _FailingAgent:
         def __init__(self, *a, **k):  # type: ignore[no-untyped-def]

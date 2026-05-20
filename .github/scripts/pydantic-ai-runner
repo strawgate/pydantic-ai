@@ -227,9 +227,12 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     )
     try:
         summariser = Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS)
+        # Share the parent's RunUsage so the compaction summarisation also
+        # counts towards the run's reported token/request totals.
         r = await summariser.run(
             f"Compact this transcript:\n\n{transcript[:60000]}",
             usage_limits=UsageLimits(request_limit=2),
+            usage=ctx.usage,
         )
         summary = str(r.output or "").strip() or "(empty summary)"
     except Exception as exc:  # noqa: BLE001 - never let compaction fail the run
@@ -796,10 +799,15 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     sub_tools = select_native_tools(READ_ONLY_SUBAGENT_TOOLS, permission_mode=None)
     sub = Agent(ctx.model, instructions=SUBAGENT_INSTRUCTIONS, tools=sub_tools)
     limits = UsageLimits(request_limit=_subagent_request_limit())
+    # Share the parent's RunUsage so the sub-agent's tokens/requests/tool-calls
+    # roll up into the run's final stream-json result — otherwise sub-agent
+    # cost is invisible.
+    before_requests = ctx.usage.requests
     try:
-        result = await sub.run(prompt, usage_limits=limits)
+        result = await sub.run(prompt, usage_limits=limits, usage=ctx.usage)
     except Exception as exc:  # noqa: BLE001 - sub-agent failure -> tool result
         return f"error: sub-agent failed: {exc}"
+    log(f"Task done: +{ctx.usage.requests - before_requests} sub-requests (total={ctx.usage.requests})")
     return str(result.output or "")
 
 

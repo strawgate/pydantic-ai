@@ -335,9 +335,10 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
             seen["instructions"] = instructions
             seen["tool_names"] = [t.name for t in (tools or [])]
 
-        async def run(self, prompt, usage_limits=None):  # type: ignore[no-untyped-def]
+        async def run(self, prompt, usage_limits=None, usage=None):  # type: ignore[no-untyped-def]
             seen["prompt"] = prompt
             seen["request_limit"] = getattr(usage_limits, "request_limit", None)
+            seen["usage_obj"] = usage  # parent's RunUsage forwarded for aggregation
 
             class _Result:
                 output = "SUB: investigated"
@@ -346,8 +347,13 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
 
     monkeypatch.setattr(har, "Agent", _CapturingAgent)
 
+    from pydantic_ai.usage import RunUsage
+
+    parent_usage = RunUsage()
+
     class _Ctx:
         model = TestModel()
+        usage = parent_usage
 
     out = asyncio.run(har.task(_Ctx(), "scan models/openai.py", "find tool_call_id bugs"))
     assert out == "SUB: investigated"
@@ -357,6 +363,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     assert "Task" not in seen["tool_names"]  # type: ignore[operator]
     assert "Bash" not in seen["tool_names"]  # type: ignore[operator]
     assert seen["request_limit"] == har.DEFAULT_SUBAGENT_REQUEST_LIMIT
+    assert seen["usage_obj"] is parent_usage  # sub-agent tokens roll up into parent
 
 
 # --------------------------------------------------------------------------- #
@@ -455,11 +462,15 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
         ModelRequest(parts=[UserPromptPart(content=f"m{i} " + "x" * 120)]) for i in range(12)
     ]
 
+    seen_usage: dict[str, object] = {}
+
     class _FakeAgent:
         def __init__(self, model, instructions=None):  # type: ignore[no-untyped-def]
             self.model = model
 
-        async def run(self, prompt, usage_limits=None):  # type: ignore[no-untyped-def]
+        async def run(self, prompt, usage_limits=None, usage=None):  # type: ignore[no-untyped-def]
+            seen_usage["usage"] = usage  # parent's RunUsage forwarded
+
             class _R:
                 output = "SHORT SUMMARY"
 
@@ -467,12 +478,19 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
 
     monkeypatch.setattr(har, "Agent", _FakeAgent)
 
+    from pydantic_ai.usage import RunUsage
+
+    parent_usage = RunUsage()
+
     class _Ctx:
         model = TestModel()
+        usage = parent_usage
 
     out = asyncio.run(har._compact_history(_Ctx(), msgs))
     # head (1) + synthetic summary (1) + last KEEP_RECENT (3) = 5
     assert len(out) == 5
+    # Compaction summariser cost rolled up into the parent's usage.
+    assert seen_usage["usage"] is parent_usage
     # Summary present in the middle synthetic ModelRequest.
     summary_msg = out[1]
     assert any("SHORT SUMMARY" in getattr(p, "content", "") for p in summary_msg.parts)
@@ -500,8 +518,11 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
 
     monkeypatch.setattr(har, "Agent", _FailingAgent)
 
+    from pydantic_ai.usage import RunUsage
+
     class _Ctx:
         model = TestModel()
+        usage = RunUsage()
 
     out = asyncio.run(har._compact_history(_Ctx(), msgs))
     # On failure: keep head + tail (no synthetic summary) = 1 + 3 = 4
@@ -522,8 +543,11 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
 
     monkeypatch.setattr(har, "Agent", _FailingAgent)
 
+    from pydantic_ai.usage import RunUsage
+
     class _Ctx:
         model = TestModel()
+        usage = RunUsage()
 
     out = asyncio.run(har.task(_Ctx(), "x", "y"))
     assert out == "error: sub-agent failed: downstream model exploded"

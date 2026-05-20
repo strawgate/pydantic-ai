@@ -147,6 +147,7 @@ def test_native_tools_registry_uses_claude_names():
         "WebFetch",
         "TodoWrite",
         "ExitPlanMode",
+        "Task",
     )
 
 
@@ -296,6 +297,87 @@ def test_request_limit_default_and_override(monkeypatch):
 def test_instructions_encourage_parallel_tool_calls():
     assert har.INSTRUCTIONS.strip()
     assert "parallel" in har.INSTRUCTIONS.lower()
+
+
+def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
+    assert har.READ_ONLY_SUBAGENT_TOOLS.isdisjoint(har.MUTATING_TOOLS)
+    assert "Task" not in har.READ_ONLY_SUBAGENT_TOOLS  # no recursion
+    # All entries are real native tool names.
+    assert har.READ_ONLY_SUBAGENT_TOOLS <= set(har.NATIVE_TOOL_NAMES)
+
+
+def test_task_registered_in_native_tools():
+    assert "Task" in har.NATIVE_TOOLS and "Task" in har.NATIVE_TOOL_NAMES
+
+
+def test_subagent_request_limit_default_and_override(monkeypatch):
+    monkeypatch.delenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", raising=False)
+    assert har._subagent_request_limit() == har.DEFAULT_SUBAGENT_REQUEST_LIMIT == 30
+    monkeypatch.setenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", "50")
+    assert har._subagent_request_limit() == 50
+    for bad in ("0", "-1", "x", ""):
+        monkeypatch.setenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", bad)
+        assert har._subagent_request_limit() == 30
+
+
+def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
+    # The Task tool spawns a sub-Agent on ctx.model with the read-only tool
+    # set, runs the given prompt, and returns the sub-agent's output.
+    import asyncio
+
+    from pydantic_ai.models.test import TestModel
+
+    seen: dict[str, object] = {}
+
+    class _CapturingAgent:
+        def __init__(self, model, instructions=None, tools=None, toolsets=None):  # type: ignore[no-untyped-def]
+            seen["model_cls"] = type(model).__name__
+            seen["instructions"] = instructions
+            seen["tool_names"] = [t.name for t in (tools or [])]
+
+        async def run(self, prompt, usage_limits=None):  # type: ignore[no-untyped-def]
+            seen["prompt"] = prompt
+            seen["request_limit"] = getattr(usage_limits, "request_limit", None)
+
+            class _Result:
+                output = "SUB: investigated"
+
+            return _Result()
+
+    monkeypatch.setattr(har, "Agent", _CapturingAgent)
+
+    class _Ctx:
+        model = TestModel()
+
+    out = asyncio.run(har.task(_Ctx(), "scan models/openai.py", "find tool_call_id bugs"))
+    assert out == "SUB: investigated"
+    assert seen["model_cls"] == "TestModel"
+    assert seen["prompt"] == "find tool_call_id bugs"
+    assert set(seen["tool_names"]) == har.READ_ONLY_SUBAGENT_TOOLS  # type: ignore[arg-type]
+    assert "Task" not in seen["tool_names"]  # type: ignore[operator]
+    assert "Bash" not in seen["tool_names"]  # type: ignore[operator]
+    assert seen["request_limit"] == har.DEFAULT_SUBAGENT_REQUEST_LIMIT
+
+
+def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
+    import asyncio
+
+    from pydantic_ai.models.test import TestModel
+
+    class _FailingAgent:
+        def __init__(self, *a, **k):  # type: ignore[no-untyped-def]
+            pass
+
+        async def run(self, *a, **k):  # type: ignore[no-untyped-def]
+            raise RuntimeError("downstream model exploded")
+
+    monkeypatch.setattr(har, "Agent", _FailingAgent)
+
+    class _Ctx:
+        model = TestModel()
+
+    out = asyncio.run(har.task(_Ctx(), "x", "y"))
+    assert out == "error: sub-agent failed: downstream model exploded"
 
 
 # --------------------------------------------------------------------------- #

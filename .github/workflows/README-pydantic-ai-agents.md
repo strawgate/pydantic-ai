@@ -21,6 +21,7 @@ targeting this repo (Python `uv` workspace).
 | `pydantic-ai-regression-detector.md` | weekly + manual | files a `[regression-detector]` issue (or noop) — old-passes/new-fails |
 | `pydantic-ai-provider-parity-explore.md` | weekly + manual | files a `[provider-parity-explore]` issue (or noop) — rotates one capability/run |
 | `pydantic-ai-streaming-resilience-sweep.md` | weekly + manual | files a `[streaming-resilience-sweep]` issue (or noop) |
+| `pydantic-ai-pr-review.md` | PR opened/synchronize/ready_for_review + manual | inline review comments + a single `submit_pull_request_review` verdict (or noop) — uses read-only `Task` sub-agents for breadth; PR context is pre-fetched by `scripts/gather-review-context.sh` |
 | `pydantic-ai-pr-selftest.md` | PR touching the harness | comments harness health on the PR |
 
 Each `.md` is the source of truth; the adjacent `.lock.yml` is the compiled
@@ -69,6 +70,7 @@ targeting key `gh-aw-<owner>/<repo>`:
 - `gh_aw_pydantic_ai_regression_detector_prompt`
 - `gh_aw_pydantic_ai_provider_parity_explore_prompt`
 - `gh_aw_pydantic_ai_streaming_resilience_sweep_prompt`
+- `gh_aw_pydantic_ai_pr_review_prompt`
 
 Seed each one with the corresponding committed default, which is the complete
 canonical prompt:
@@ -80,6 +82,7 @@ canonical prompt:
 - `.github/workflows/shared/prompts/pydantic-ai-regression-detector.md`
 - `.github/workflows/shared/prompts/pydantic-ai-provider-parity-explore.md`
 - `.github/workflows/shared/prompts/pydantic-ai-streaming-resilience-sweep.md`
+- `.github/workflows/shared/prompts/pydantic-ai-pr-review.md`
 
 (Paste the file content below its leading HTML comment.) Whatever the variable
 holds **replaces** the prompt wholesale at run time — iterate freely in the
@@ -99,7 +102,7 @@ gh aw compile --actions-repo github/gh-aw --action-tag "$GHAW_SHA" \
   pydantic-ai-bug-hunter pydantic-ai-docs-drift pydantic-ai-pr-selftest \
   pydantic-ai-provider-mapping-sweep pydantic-ai-roundtrip-sweep \
   pydantic-ai-regression-detector pydantic-ai-provider-parity-explore \
-  pydantic-ai-streaming-resilience-sweep
+  pydantic-ai-streaming-resilience-sweep pydantic-ai-pr-review
 # Then discard gh-aw's reformat of .github/dependabot.yml (it drops `version: 2`):
 git checkout -- .github/dependabot.yml
 ```

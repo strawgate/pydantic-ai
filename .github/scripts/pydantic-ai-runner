@@ -111,9 +111,38 @@ NATIVE_TOOL_NAMES = (
     "WebFetch",
     "TodoWrite",
     "ExitPlanMode",
+    "Task",
 )
 # Tools that mutate the workspace — withheld in `plan` permission mode.
 MUTATING_TOOLS = frozenset({"Bash", "Write", "Edit", "MultiEdit"})
+# Tools handed to read-only `Task` sub-agents — strictly non-mutating and
+# excluding `Task` itself to prevent recursive sub-agent spawning.
+READ_ONLY_SUBAGENT_TOOLS = frozenset(
+    {"Read", "Grep", "Glob", "LS", "WebFetch", "TodoWrite", "ExitPlanMode"}
+)
+# Per-sub-agent model-request cap (override with GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT).
+DEFAULT_SUBAGENT_REQUEST_LIMIT = 30
+
+
+def _subagent_request_limit() -> int:
+    """Per-`Task` sub-agent request cap, env-overridable."""
+    raw = os.environ.get("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return DEFAULT_SUBAGENT_REQUEST_LIMIT
+
+
+SUBAGENT_INSTRUCTIONS = (
+    "You are a focused, read-only sub-agent. You can read files, search the "
+    "codebase, and fetch web content, but you cannot modify the workspace or "
+    "shell out. Investigate the task you were given and return a concise, "
+    "evidence-grounded answer to your caller — do not try to act on it."
+)
 
 
 def log(msg: str) -> None:
@@ -602,6 +631,27 @@ def exit_plan_mode(plan: str) -> str:
     return "Plan acknowledged — proceeding with execution."
 
 
+async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
+    """Dispatch a focused **read-only sub-agent** (Claude's `Task` tool).
+
+    The sub-agent runs on the same model as the caller (via `ctx.model`),
+    with only the read-only native tools (`READ_ONLY_SUBAGENT_TOOLS`) — no
+    Bash, Write, Edit, MultiEdit, or nested Task. Used by orchestrating
+    prompts to parallelise investigation (e.g. one sub-agent per file in a
+    PR review) and then merge findings, in the spirit of the "Pick Three,
+    Keep Many" pattern.
+    """
+    log(f"Task spawn: {description[:120]}")
+    sub_tools = select_native_tools(READ_ONLY_SUBAGENT_TOOLS, permission_mode=None)
+    sub = Agent(ctx.model, instructions=SUBAGENT_INSTRUCTIONS, tools=sub_tools)
+    limits = UsageLimits(request_limit=_subagent_request_limit())
+    try:
+        result = await sub.run(prompt, usage_limits=limits)
+    except Exception as exc:  # noqa: BLE001 - sub-agent failure -> tool result
+        return f"error: sub-agent failed: {exc}"
+    return str(result.output or "")
+
+
 # Claude tool name -> (callable, one-line description). The function names stay
 # idiomatic snake_case; `pydantic_ai.Tool` exposes them under the Claude names.
 # `Callable[..., Any]`: most tools return `str`, but WebFetch is an async
@@ -618,6 +668,7 @@ NATIVE_TOOLS: dict[str, tuple[Callable[..., Any], str]] = {
     "WebFetch": (web_fetch, "Fetch a URL and answer a prompt about its content."),
     "TodoWrite": (todo_write, "Record the agent's task checklist."),
     "ExitPlanMode": (exit_plan_mode, "Signal the end of planning and proceed."),
+    "Task": (task, "Dispatch a read-only sub-agent to investigate a focused task and return its findings."),
 }
 
 

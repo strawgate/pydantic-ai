@@ -790,8 +790,7 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     with only the read-only native tools (`READ_ONLY_SUBAGENT_TOOLS`) — no
     Bash, Write, Edit, MultiEdit, or nested Task. Used by orchestrating
     prompts to parallelise investigation (e.g. one sub-agent per file in a
-    PR review) and then merge findings, in the spirit of the "Pick Three,
-    Keep Many" pattern.
+    PR review) and then merge the findings.
     """
     log(f"Task spawn: {description[:120]}")
     sub_tools = select_native_tools(READ_ONLY_SUBAGENT_TOOLS, permission_mode=None)

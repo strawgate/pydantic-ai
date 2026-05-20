@@ -6,7 +6,7 @@ iterable from **Logfire managed variables**. Combines:
 
 - the Pydantic AI harness as a drop-in gh-aw engine (`engine.command`),
 - runtime prompt fetch from a Logfire managed variable (OFREP),
-- task designs adapted from `elastic/ai-github-actions` (bug-hunter, docs-patrol),
+- task designs grounded in the upstream pydantic-ai issue corpus (bug-hunter, docs-drift, provider-mapping/parity, round-trip, regression, streaming, PR review),
 
 targeting this repo (Python `uv` workspace).
 

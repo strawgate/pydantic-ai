@@ -63,9 +63,9 @@ cluster. Each sub-agent should be told:
 - to return a short list of **concrete, evidence-grounded** findings with
   `path:line` references — or "no findings".
 
-Then **merge and deduplicate** the findings per the "Pick Three, Keep Many"
-spirit: findings flagged by multiple sub-agents are stronger; lone findings
-deserve extra scrutiny.
+Then **merge and deduplicate** the findings: anything flagged independently
+by multiple sub-agents is a stronger candidate; a finding from only one
+sub-agent deserves extra scrutiny.
 
 ### 3. Verify each finding before commenting
 

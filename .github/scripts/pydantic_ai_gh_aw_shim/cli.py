@@ -297,7 +297,7 @@ def _trim_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
 
     if dedup_count or truncate_count:
         logger.info(
-            'compaction trim: deduped %d superseded read(s), truncated %d oversized result(s), saved %d chars',
+            'trim: deduped %d superseded read(s), truncated %d oversized result(s), saved %d chars',
             dedup_count,
             truncate_count,
             bytes_saved,

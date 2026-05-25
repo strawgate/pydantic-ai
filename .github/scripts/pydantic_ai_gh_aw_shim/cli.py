@@ -302,6 +302,13 @@ def _trim_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
             truncate_count,
             bytes_saved,
         )
+        emit({
+            'type': 'system',
+            'subtype': 'compaction_trim',
+            'deduped_reads': dedup_count,
+            'truncated_results': truncate_count,
+            'chars_saved': bytes_saved,
+        })
         return out
     return messages
 
@@ -339,6 +346,14 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         len(middle),
         COMPACTION_KEEP_RECENT,
     )
+    emit({
+        'type': 'system',
+        'subtype': 'compaction_summary_start',
+        'history_chars': size,
+        'history_messages': len(trimmed),
+        'middle_messages': len(middle),
+        'keep_recent': COMPACTION_KEEP_RECENT,
+    })
     # Preserve any earlier-round synthetic at the head of the middle so a
     # fallback (`return [prior_synthetic, *tail]`) doesn't silently forget
     # the entire run's compacted history.
@@ -360,6 +375,7 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     except Exception as exc:
         ctx.usage.incr(sub_usage)
         logger.warning('compaction summarisation failed (%r); falling back', exc)
+        emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': str(exc)})
         return [prior_synthetic, *tail] if prior_synthetic else tail
     ctx.usage.incr(sub_usage)
     # If the summariser produces output larger than the middle it's replacing,
@@ -368,6 +384,7 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     middle_size = _history_size_chars(middle)
     if len(summary) >= middle_size:
         logger.info('compaction summary discarded (%d >= %d chars); falling back', len(summary), middle_size)
+        emit({'type': 'system', 'subtype': 'compaction_summary_discarded', 'summary_chars': len(summary), 'middle_chars': middle_size})
         return [prior_synthetic, *tail] if prior_synthetic else tail
     logger.info(
         'compaction summary done: %d middle messages (%d chars) -> %d-char summary',
@@ -375,6 +392,15 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         middle_size,
         len(summary),
     )
+    emit({
+        'type': 'system',
+        'subtype': 'compaction_summary_done',
+        'middle_messages': len(middle),
+        'middle_chars': middle_size,
+        'summary_chars': len(summary),
+        'input_tokens': sub_usage.input_tokens,
+        'output_tokens': sub_usage.output_tokens,
+    })
     synthetic = ModelRequest(parts=[UserPromptPart(content=f'{_SYNTHETIC_SUMMARY_TAG}\n{summary}')])
     return [synthetic, *tail]
 

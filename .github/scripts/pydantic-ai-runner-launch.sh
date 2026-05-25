@@ -35,4 +35,8 @@ if [ -z "${uv_bin}" ]; then
   exit 127
 fi
 echo "[harness-launch] using uv=${uv_bin}" >&2
+# Prepend /tmp/gh-aw/bin (uv + rg symlinks staged by prewarm) so the agent's
+# Bash subprocesses and shutil.which can find tools by plain name.
+export PATH="/tmp/gh-aw/bin:${PATH}"
+export UV_TOOL_BIN_DIR=/tmp/gh-aw/bin
 exec "${uv_bin}" run --script "${runner}" "$@"

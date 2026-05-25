@@ -15,8 +15,7 @@ call genuinely needs a previous call's result.
 source files fit in one or two calls. Avoid reading 30–80 lines at a time.
 
 **Search tools** — use the native `Grep` and `Glob` tools for codebase search.
-They work reliably regardless of `PATH`. Falling back to `bash rg` is fragile
-(ripgrep may not be installed in the sandbox).
+`rg` and `uv` are also available as plain commands via `Bash`.
 
 **Dev environment** — the repo is checked out at `$GITHUB_WORKSPACE`. Dev
 dependencies are **not** pre-installed; run `make install` once before using

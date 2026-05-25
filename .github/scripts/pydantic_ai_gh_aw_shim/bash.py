@@ -9,7 +9,8 @@ from .shared import clip, workspace
 # inherits so tools like `rg`, `make`, `git`, and `uv` are reliably reachable
 # even if the AWF sandbox launches with a minimal inherited PATH.
 _STANDARD_PATHS = [
-    '/tmp/gh-aw/bin',       # uv + rg symlinked here by prewarm-pydantic-ai-runner.sh
+    '/opt/hostedtoolcache/gh-aw-tools/current/x64/bin',  # rg + uv installed by install-sandbox-tools.sh
+    '/tmp/gh-aw/bin',       # fallback; launcher lives here too
     '/usr/local/bin',
     '/usr/bin',
     '/bin',

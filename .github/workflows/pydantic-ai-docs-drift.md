@@ -88,6 +88,11 @@ pre-agent-steps:
     run: |
       mkdir -p /tmp/gh-aw/bin
       install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  # Install ripgrep and expose uv+rg inside the AWF chroot.
+  # AWF auto-merges /opt/hostedtoolcache/**/bin into the container PATH
+  # and also reads $GITHUB_PATH entries added before the engine step.
+  - name: Install tools for AWF sandbox (ripgrep)
+    run: bash .github/scripts/install-sandbox-tools.sh
   # Warm the harness's uv script environment on the OPEN network so the
   # firewalled agent reuses a warm cache (non-fatal on failure).
   - name: Pre-warm Pydantic AI gh-aw shim uv environment

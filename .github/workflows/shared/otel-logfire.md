@@ -24,7 +24,7 @@
 #     - shared/otel-logfire.md
 observability:
   otlp:
-    endpoint: https://logfire-us.pydantic.dev
+    endpoint: https://logfire-eu.pydantic.dev
     headers:
       Authorization: ${{ secrets.LOGFIRE_WRITE_TOKEN }}
     if-missing: warn

@@ -136,17 +136,28 @@ COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
 INSTRUCTIONS = (
-    'You can call multiple tools in a single turn. When tool calls are '
-    "independent (no call needs another call's output), issue them together "
-    'in one turn so they run in parallel — this is faster and uses far fewer '
-    'model requests. Only chain tools sequentially when one genuinely needs a '
-    "previous tool's result.\n\n"
-    'Dev environment: the repo is checked out at $GITHUB_WORKSPACE. '
-    'Dev dependencies are NOT pre-installed — run `make install` once before '
-    'using pytest, ruff, or pyright. Prefer `uv run pytest <test_file>` over '
-    'a bare `pytest` call; uv handles the virtual env automatically. '
-    'Use the native Grep and Glob tools for codebase search — they are faster '
-    'than shelling out to rg/grep via Bash.'
+    '## Parallel tool calls\n\n'
+    'The model supports parallel tool calls. When multiple reads, searches, or '
+    "lookups are independent — meaning one doesn't need another's result — "
+    'issue them all in the same response. They execute concurrently. Only '
+    'chain sequentially when one call genuinely needs a previous result.\n\n'
+    '## File reading\n\n'
+    'Read files in large ranges (500+ lines per call). MAX_TOOL_OUTPUT is '
+    '50 000 chars so most Python source files fit in one or two reads. '
+    'Avoid reading 30–80 lines at a time.\n\n'
+    '## Search tools\n\n'
+    'Use the native Grep and Glob tools for codebase search — they use '
+    'ripgrep internally and are always available regardless of PATH. '
+    'Falling back to `bash rg` or `bash grep` is unnecessary and fragile.\n\n'
+    '## Dev environment\n\n'
+    'The repo is checked out at $GITHUB_WORKSPACE. Dev dependencies are NOT '
+    'pre-installed — run `make install` once before using pytest, ruff, or '
+    'pyright. Prefer `uv run pytest <test_file>` over a bare `pytest` call; '
+    'uv handles the virtual env automatically.\n\n'
+    '## GitHub issue search\n\n'
+    '`gh issue list --search` returns HTTP 403 via the AWF firewall proxy. '
+    'Use the MCP tools instead: '
+    '`mcp__github__search_issues(query="repo:pydantic/pydantic-ai <keywords>")`.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.

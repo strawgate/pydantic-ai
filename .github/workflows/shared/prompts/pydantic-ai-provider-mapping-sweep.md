@@ -80,13 +80,10 @@ mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <chosen-pr
 
 If a matching issue covers the same mapping bug, call `mcp__safeoutputs__noop`.
 
-## Efficiency
+## Sandbox notes
 
-- **Parallel tool calls**: when multiple reads or searches are independent,
-  issue them in the same tool-call batch — the model supports parallel calls
-  and it is significantly faster than sequential chaining.
-- Read the provider file in full (or large ranges) rather than tiny chunks. The
-  model files are typically 800-1500 lines — read them in 1-2 calls.
+- Read the provider file in full (or large ranges). Model files are typically
+  800–1500 lines — read them in 1–2 calls.
 - Do NOT spend time trying to import provider SDK type stubs (`mypy_boto3_*`,
   etc.) — they are not installed. Instead, grep the raw
   `botocore/data/*/service-2.json` or use `WebFetch` on the provider's API docs.

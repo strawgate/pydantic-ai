@@ -76,7 +76,7 @@ weak or speculative issue is worse than filing nothing.
   for another. Only flag a bug if the behavior contradicts the provider's own
   documented API contract.
 
-### Deduplication — mandatory BEFORE exploring code
+### Deduplication — mandatory BEFORE filing an issue
 
 **Before any code exploration**, search for existing issues that might overlap
 your run's scope. Use the MCP GitHub tools (not the `gh` CLI, which is blocked

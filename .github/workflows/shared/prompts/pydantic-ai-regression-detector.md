@@ -60,7 +60,7 @@ only "looks risky" in the diff is not a finding.
 - Speculation without an old-passes/new-fails reproduction.
 - Behavior already tracked by an open issue — **search issues first**.
 
-## Deduplication — mandatory BEFORE exploring code
+## Deduplication — mandatory BEFORE filing an issue
 
 **Before any code exploration**, search for existing issues using the MCP
 GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
@@ -73,7 +73,6 @@ If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
 ## Sandbox notes
 
-- Run the OLD and NEW version tests concurrently where possible.
 - Use the native `Grep` tool for codebase search.
 
 ## Quality Gate — When to Noop

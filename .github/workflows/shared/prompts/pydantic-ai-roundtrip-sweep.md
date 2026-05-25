@@ -58,7 +58,7 @@ existing suite. The bug must be one you triggered and observed.
 - By-design lossy fields explicitly documented as such.
 - Behavior already tracked by an open issue — **search issues first**.
 
-## Deduplication — mandatory BEFORE exploring code
+## Deduplication — mandatory BEFORE filing an issue
 
 **Before any code exploration**, search for existing issues using the MCP
 GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):

@@ -61,7 +61,7 @@ assertion leakage on early exit. Do not run and report the existing suite.
 - Speculation without a deterministic failing reproduction.
 - Behavior already tracked by an open issue — **search issues first**.
 
-## Deduplication — mandatory BEFORE exploring code
+## Deduplication — mandatory BEFORE filing an issue
 
 **Before any code exploration**, search for existing issues using the MCP
 GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
@@ -74,7 +74,6 @@ If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
 ## Sandbox notes
 
-- Read `result.py` and `_agent_graph.py` in large ranges (500+ lines at once).
 - Use `FunctionModel` with a simple stream function for reproductions — avoid
   complex model setups.
 

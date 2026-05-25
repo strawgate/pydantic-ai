@@ -58,7 +58,7 @@ Distinguish **silent drops** (input accepted, quietly ignored — a bug) from
 - Speculative "would be nice" features with no user impact.
 - Gaps already tracked by an open issue — **search issues first**.
 
-## Deduplication — mandatory BEFORE exploring code
+## Deduplication — mandatory BEFORE filing an issue
 
 **Before any code exploration**, search for existing issues using the MCP
 GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
@@ -71,8 +71,6 @@ mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <capabilit
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
 ## Sandbox notes
-
-- Read model files in large ranges (the full streaming method at once, not in chunks).
 
 ## Output — When to Noop
 

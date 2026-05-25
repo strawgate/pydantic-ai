@@ -91,6 +91,17 @@ If a matching issue already covers the same root cause, call
 `mcp__safeoutputs__noop` immediately — do NOT file a duplicate, even to
 "independently confirm" the bug. Confirming is not value-add.
 
+### Efficiency
+
+- **Parallel tool calls**: when multiple reads or searches are independent,
+  issue them in the same tool-call batch — the model supports parallel calls
+  and it is significantly faster than sequential chaining.
+- Read files in large ranges (500+ lines). Do NOT read 30-80 lines at a time.
+- Prefer the native `Grep` and `Glob` tools over `bash rg`/`grep` — they are
+  faster and sidestep PATH issues in the sandbox.
+- Once you've identified a suspect function, write the minimal test immediately.
+  Don't spend 10+ min reading adjacent code "for context" first.
+
 ### Quality Gate — When to Noop
 
 Call `mcp__safeoutputs__noop` if any of these are true:

@@ -72,6 +72,9 @@ If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
 ## Efficiency
 
+- **Parallel tool calls**: when multiple reads or searches are independent,
+  issue them in the same tool-call batch — the model supports parallel calls
+  and it is significantly faster than sequential chaining.
 - Focus on finding the **one concrete gap** that matters most, not building an
   exhaustive matrix for its own sake. The matrix is evidence, not the goal.
 - Read model files in large ranges (the full streaming method at once).

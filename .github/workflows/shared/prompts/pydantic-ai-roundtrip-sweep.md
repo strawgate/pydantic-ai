@@ -72,10 +72,14 @@ matching issue already exists, call `mcp__safeoutputs__noop` immediately.
 
 ## Efficiency
 
+- **Parallel tool calls**: when multiple reads or searches are independent,
+  issue them in the same tool-call batch — the model supports parallel calls
+  and it is significantly faster than sequential chaining.
 - Read files in large ranges (500+ lines). Do NOT read in 30-80 line chunks.
 - Once you identify a suspicious code path, write and run the test immediately.
   Do not spend 10+ minutes reading adjacent code "for context" before verifying.
-- Prefer the native `Grep` tool over `bash grep` commands.
+- Prefer the native `Grep` and `Glob` tools over `bash grep`/`find` — they
+  are faster and work without fighting PATH issues in the sandbox.
 - If you find the bug in under 5 minutes, that's ideal — file and finish.
 
 ## Quality Gate — When to Noop

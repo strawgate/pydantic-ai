@@ -71,6 +71,15 @@ mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[regressi
 
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
+## Efficiency
+
+- **Parallel tool calls**: when multiple reads or searches are independent,
+  issue them in the same tool-call batch — the model supports parallel calls
+  and it is significantly faster than sequential chaining.
+- Run the OLD and NEW version tests in parallel where possible.
+- Prefer the native `Grep` tool over `bash rg`/`grep` to avoid PATH issues.
+- Once you have a clear old-passes/new-fails result, file immediately.
+
 ## Quality Gate — When to Noop
 
 `mcp__safeoutputs__noop` is the expected outcome most runs. Only file when you have a concrete

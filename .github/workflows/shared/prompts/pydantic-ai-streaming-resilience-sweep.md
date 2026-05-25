@@ -74,6 +74,9 @@ If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
 ## Efficiency
 
+- **Parallel tool calls**: when multiple reads or searches are independent,
+  issue them in the same tool-call batch — the model supports parallel calls
+  and it is significantly faster than sequential chaining.
 - Read `result.py` and `_agent_graph.py` in large ranges (500+ lines at once).
 - Once you identify a suspect code path, write the test immediately — don't
   spend 10 minutes reading other files for extra context.

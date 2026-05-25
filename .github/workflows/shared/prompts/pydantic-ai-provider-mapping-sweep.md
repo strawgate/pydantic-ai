@@ -82,6 +82,9 @@ If a matching issue covers the same mapping bug, call `mcp__safeoutputs__noop`.
 
 ## Efficiency
 
+- **Parallel tool calls**: when multiple reads or searches are independent,
+  issue them in the same tool-call batch — the model supports parallel calls
+  and it is significantly faster than sequential chaining.
 - Read the provider file in full (or large ranges) rather than tiny chunks. The
   model files are typically 800-1500 lines — read them in 1-2 calls.
 - Do NOT spend time trying to import provider SDK type stubs (`mypy_boto3_*`,

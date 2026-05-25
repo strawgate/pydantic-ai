@@ -70,6 +70,7 @@ safe-outputs:
 timeout-minutes: 30
 imports:
   - shared/otel-logfire.md
+  - shared/tool-hints.md
 pre-steps:
   # Setting engine.command makes gh-aw skip ALL engine installation steps,
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
@@ -87,6 +88,11 @@ pre-agent-steps:
     run: |
       mkdir -p /tmp/gh-aw/bin
       install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  # Install ripgrep and expose uv+rg inside the AWF chroot.
+  # AWF auto-merges /opt/hostedtoolcache/**/bin into the container PATH
+  # and also reads $GITHUB_PATH entries added before the engine step.
+  - name: Install tools for AWF sandbox (ripgrep)
+    run: bash .github/scripts/install-sandbox-tools.sh
   # Warm the harness's uv script environment on the OPEN network so the
   # firewalled agent reuses a warm cache (non-fatal on failure).
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
@@ -115,8 +121,8 @@ jobs:
         with:
           logfire-variable-key: gh_aw_pydantic_ai_streaming_resilience_sweep_prompt
           default-prompt-file: .github/workflows/shared/prompts/pydantic-ai-streaming-resilience-sweep.md
-          logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
-          logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
+          logfire-read-key: ${{ secrets.LOGFIRE_PROMPT_TOKEN }}
+          logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-eu.pydantic.dev' }}
 ---
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

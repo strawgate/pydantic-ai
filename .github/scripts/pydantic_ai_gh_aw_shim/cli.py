@@ -140,7 +140,13 @@ INSTRUCTIONS = (
     "independent (no call needs another call's output), issue them together "
     'in one turn so they run in parallel — this is faster and uses far fewer '
     'model requests. Only chain tools sequentially when one genuinely needs a '
-    "previous tool's result."
+    "previous tool's result.\n\n"
+    'Dev environment: the repo is checked out at $GITHUB_WORKSPACE. '
+    'Dev dependencies are NOT pre-installed — run `make install` once before '
+    'using pytest, ruff, or pyright. Prefer `uv run pytest <test_file>` over '
+    'a bare `pytest` call; uv handles the virtual env automatically. '
+    'Use the native Grep and Glob tools for codebase search — they are faster '
+    'than shelling out to rg/grep via Bash.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.

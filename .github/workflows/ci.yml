@@ -376,23 +376,7 @@ jobs:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     needs: classify
     if: needs.classify.outputs.docs_only != 'true'
-    # Route the all-extras cells to Ubicloud 8-core runners on same-repo PRs and pushes, or when
-    # opted in via the 'ci:fast' label; the other install variants stay on `ubuntu-latest`.
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
-    # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
-    # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
-    runs-on: >-
-      ${{
-        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && matrix.install.name == 'all-extras'
-        && (
-          github.event_name == 'push'
-          || github.event.pull_request.head.repo.full_name == github.repository
-          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
-        )
-        && 'ubicloud-premium-8'
-        || 'ubuntu-latest'
-      }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -490,10 +474,10 @@ jobs:
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
-      # *physical* cores while `logical` counts every vCPU, which is what Ubicloud's
-      # hyperthreaded runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to
-      # it, so both spellings resolve to the same count today; the flag is here for when
-      # that stops being true.
+      # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
+      # runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to it, so both
+      # spellings resolve to the same count today; the flag is here for when that stops
+      # being true.
       # Everything under `tests/durable_exec` is ignored here and runs in `test-durable-exec`
       # instead: most of those tests pin xdist groups around real local servers, so the chains
       # they form would otherwise be the critical-path floor of the all-extras cells -- the
@@ -547,19 +531,7 @@ jobs:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
     if: needs.classify.outputs.docs_only != 'true'
-    # Ubicloud 4-core runners, gated like the `test` job above minus its all-extras clause:
-    # same-repo PRs, pushes, or the 'ci:fast' label, with 'ci:slow' forcing GitHub runners.
-    runs-on: >-
-      ${{
-        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && (
-          github.event_name == 'push'
-          || github.event.pull_request.head.repo.full_name == github.repository
-          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
-        )
-        && 'ubicloud-premium-4'
-        || 'ubuntu-latest'
-      }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -655,20 +627,7 @@ jobs:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     needs: classify
     if: needs.classify.outputs.docs_only != 'true'
-    # Use Ubicloud 8-core runners on same-repo PRs and pushes, or opted in via 'ci:fast' label
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
-    # See the note on the `test` job for why push/tag runs need their own clause.
-    runs-on: >-
-      ${{
-        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && (
-          github.event_name == 'push'
-          || github.event.pull_request.head.repo.full_name == github.repository
-          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
-        )
-        && 'ubicloud-premium-8'
-        || 'ubuntu-latest'
-      }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
